@@ -1,258 +1,9 @@
-diff --git a/app/api/chat/route.ts b/app/api/chat/route.ts
-new file mode 100644
-index 0000000..c14fe48
---- /dev/null
-+++ b/app/api/chat/route.ts
-@@ -0,0 +1,69 @@
-+import { NextResponse } from "next/server";
-+import { buildSystemPrompt, parseQualified } from "@/lib/chatPrompt";
-+import { callClaude } from "@/lib/claude";
-+import { sendTriggerEmail } from "@/lib/gmail";
-+
-+export const runtime = "nodejs";
-+export const dynamic = "force-dynamic";
-+
-+/**
-+ * POST /api/chat
-+ *  - action "trigger" : { brief, requesterEmail, source } -> envoie l'email de déclenchement (JSON)
-+ *  - sinon (conversation) : { messages, prenom, role } -> { text, qualified, brief } (JSON)
-+ *    (l'effet typewriter est géré côté client)
-+ */
-+export async function POST(req: Request) {
-+  let body: any;
-+  try {
-+    body = await req.json();
-+  } catch {
-+    return new NextResponse("Requête invalide", { status: 400 });
-+  }
-+
-+  if (body.action === "trigger") {
-+    const brief = body.brief || {};
-+    const webhookUrl = process.env.APPS_SCRIPT_WEBHOOK_URL;
-+    const secret = process.env.WEBHOOK_SECRET;
-+
-+    // Déclenchement instantané via Web App Apps Script (si configuré)
-+    if (webhookUrl && secret) {
-+      try {
-+        const r = await fetch(webhookUrl, {
-+          method: "POST",
-+          headers: { "Content-Type": "application/json" },
-+          body: JSON.stringify({ secret, brief }),
-+        });
-+        const data: any = await r.json().catch(() => ({}));
-+        if (!r.ok || data.error) throw new Error(data.error || `Webhook HTTP ${r.status}`);
-+        return NextResponse.json({ ok: true, instant: true, ...data });
-+      } catch (e: any) {
-+        // Repli sur l'email de déclenchement si le webhook échoue
-+        try {
-+          const info = await sendTriggerEmail(brief, body.source || "Chat dashboard", body.requesterEmail || "inconnu");
-+          return NextResponse.json({ ok: true, instant: false, fallback: true, webhookError: e.message, ...info });
-+        } catch (e2: any) {
-+          return new NextResponse(e2.message || "Erreur déclenchement", { status: 500 });
-+        }
-+      }
-+    }
-+
-+    // Sinon : ancien comportement (email de déclenchement, polling 15 min)
-+    try {
-+      const info = await sendTriggerEmail(brief, body.source || "Chat dashboard", body.requesterEmail || "inconnu");
-+      return NextResponse.json({ ok: true, instant: false, ...info });
-+    } catch (e: any) {
-+      return new NextResponse(e.message || "Erreur déclenchement", { status: 500 });
-+    }
-+  }
-+
-+  try {
-+    const messages = (body.messages || []).filter((m: any) => m && m.content);
-+    const system = buildSystemPrompt(body.prenom || "", body.role || "");
-+    const reply = await callClaude(messages, system, 1024);
-+    const { qualified, brief, clean } = parseQualified(reply);
-+    // si qualifié, ne jamais renvoyer le bloc QUALIFIED brut (clean peut être vide)
-+    return NextResponse.json({ text: clean, qualified, brief });
-+  } catch (e: any) {
-+    return new NextResponse(e.message || "Erreur Claude", { status: 500 });
-+  }
-+}
-diff --git a/app/api/generate/route.ts b/app/api/generate/route.ts
-index c14fe48..53240b4 100644
---- a/app/api/generate/route.ts
-+++ b/app/api/generate/route.ts
-@@ -1,69 +1,77 @@
- import { NextResponse } from "next/server";
--import { buildSystemPrompt, parseQualified } from "@/lib/chatPrompt";
--import { callClaude } from "@/lib/claude";
--import { sendTriggerEmail } from "@/lib/gmail";
-+import { buildReportContextWithLogistics, loadClientConfig, parseMonthLabel } from "@/lib/compute";
-+import {
-+  fetchGeodisFromSupabase,
-+  fetchGlsFromSupabase,
-+  toGeodisResult,
-+  toGlsResult,
-+} from "@/lib/supabaseLogistics";
-+import { buildReportData } from "@/lib/reportData";
-+import { renderDesignReportPdf } from "@/lib/renderDesignPdf";
- 
- export const runtime = "nodejs";
- export const dynamic = "force-dynamic";
-+export const maxDuration = 60;
- 
- /**
-- * POST /api/chat
-- *  - action "trigger" : { brief, requesterEmail, source } -> envoie l'email de déclenchement (JSON)
-- *  - sinon (conversation) : { messages, prenom, role } -> { text, qualified, brief } (JSON)
-- *    (l'effet typewriter est géré côté client)
-+ * POST /api/generate
-+ * FormData: { client, month_label }
-+ * Les données logistiques GEODIS/GLS sont récupérées depuis Supabase
-+ * (tables alimentées par les workers Railway) — plus d'upload de fichiers.
-+ * Retourne le PDF du rapport mensuel.
-  */
- export async function POST(req: Request) {
--  let body: any;
-+  let clientKey = "";
-+  let monthLabel = "";
-   try {
--    body = await req.json();
-+    const form = await req.formData();
-+    clientKey = String(form.get("client") ?? "");
-+    monthLabel = String(form.get("month_label") ?? "");
-   } catch {
--    return new NextResponse("Requête invalide", { status: 400 });
-+    return NextResponse.json({ error: "Requête invalide (FormData attendu)." }, { status: 400 });
-   }
- 
--  if (body.action === "trigger") {
--    const brief = body.brief || {};
--    const webhookUrl = process.env.APPS_SCRIPT_WEBHOOK_URL;
--    const secret = process.env.WEBHOOK_SECRET;
--
--    // Déclenchement instantané via Web App Apps Script (si configuré)
--    if (webhookUrl && secret) {
--      try {
--        const r = await fetch(webhookUrl, {
--          method: "POST",
--          headers: { "Content-Type": "application/json" },
--          body: JSON.stringify({ secret, brief }),
--        });
--        const data: any = await r.json().catch(() => ({}));
--        if (!r.ok || data.error) throw new Error(data.error || `Webhook HTTP ${r.status}`);
--        return NextResponse.json({ ok: true, instant: true, ...data });
--      } catch (e: any) {
--        // Repli sur l'email de déclenchement si le webhook échoue
--        try {
--          const info = await sendTriggerEmail(brief, body.source || "Chat dashboard", body.requesterEmail || "inconnu");
--          return NextResponse.json({ ok: true, instant: false, fallback: true, webhookError: e.message, ...info });
--        } catch (e2: any) {
--          return new NextResponse(e2.message || "Erreur déclenchement", { status: 500 });
--        }
--      }
--    }
--
--    // Sinon : ancien comportement (email de déclenchement, polling 15 min)
--    try {
--      const info = await sendTriggerEmail(brief, body.source || "Chat dashboard", body.requesterEmail || "inconnu");
--      return NextResponse.json({ ok: true, instant: false, ...info });
--    } catch (e: any) {
--      return new NextResponse(e.message || "Erreur déclenchement", { status: 500 });
--    }
-+  if (!clientKey || !monthLabel) {
-+    return NextResponse.json({ error: "Client et mois requis." }, { status: 400 });
-   }
- 
-   try {
--    const messages = (body.messages || []).filter((m: any) => m && m.content);
--    const system = buildSystemPrompt(body.prenom || "", body.role || "");
--    const reply = await callClaude(messages, system, 1024);
--    const { qualified, brief, clean } = parseQualified(reply);
--    // si qualifié, ne jamais renvoyer le bloc QUALIFIED brut (clean peut être vide)
--    return NextResponse.json({ text: clean, qualified, brief });
-+    const cfg = loadClientConfig(clientKey);
-+    const month = parseMonthLabel(monthLabel);
-+    const startDate = new Date(`${month.dateFrom}T00:00:00`);
-+    const endDate = new Date(`${month.dateTo}T23:59:59`);
-+
-+    const [geodisRaw, glsRaw] = await Promise.all([
-+      fetchGeodisFromSupabase(cfg, startDate, endDate),
-+      fetchGlsFromSupabase(cfg, startDate, endDate),
-+    ]);
-+
-+    const context = await buildReportContextWithLogistics(
-+      clientKey,
-+      monthLabel,
-+      toGeodisResult(geodisRaw),
-+      toGlsResult(glsRaw)
-+    );
-+
-+    const data = buildReportData(context);
-+    const pdfBytes = await renderDesignReportPdf(data);
-+
-+    const safeMonth = monthLabel.replace(/\s+/g, "_");
-+    const filename = `Rapport_${cfg.display_name}_${safeMonth}.pdf`;
-+
-+    return new NextResponse(Buffer.from(pdfBytes), {
-+      status: 200,
-+      headers: {
-+        "Content-Type": "application/pdf",
-+        "Content-Disposition": `attachment; filename="${filename}"`,
-+        "Cache-Control": "no-store",
-+      },
-+    });
-   } catch (e: any) {
--    return new NextResponse(e.message || "Erreur Claude", { status: 500 });
-+    console.error("Erreur génération rapport:", e);
-+    return NextResponse.json(
-+      { error: e?.message || "Erreur pendant la génération." },
-+      { status: 500 }
-+    );
-   }
- }
-diff --git a/app/page.tsx b/app/page.tsx
-index a995212..02a1090 100644
---- a/app/page.tsx
-+++ b/app/page.tsx
-@@ -167,15 +167,9 @@ export default function HomePage() {
-           </div>
- 
-           <div style={hintStyle}>
--            Prévisions, consommation, stock/transit et données financières sont désormais récupérés automatiquement.
-+            Prévisions, consommation, stock/transit, données financières et logistique GEODIS/GLS (Supabase) sont récupérés automatiquement — plus aucun fichier à importer.
-           </div>
- 
--          <label style={labelStyle}>Fichier GEODIS (optionnel)</label>
--          <input type="file" name="geodis" accept=".xlsx" style={fileInputStyle} />
--
--          <label style={labelStyle}>Fichier GLS (optionnel)</label>
--          <input type="file" name="gls" accept=".csv" style={fileInputStyle} />
--
-           <button
-             type="submit"
-             disabled={submitting}
-@@ -216,12 +210,6 @@ const inputStyle: React.CSSProperties = {
-   fontSize: 14,
- };
- 
--const fileInputStyle: React.CSSProperties = {
--  width: "100%",
--  padding: "8px 0",
--  fontSize: 13,
--};
--
- const hintStyle: React.CSSProperties = {
-   fontSize: 12,
-   color: "#555",
 diff --git a/lib/renderDesignPdf.ts b/lib/renderDesignPdf.ts
-index 423a647..d76f00a 100644
+index 06aa081..d76f00a 100644
 --- a/lib/renderDesignPdf.ts
 +++ b/lib/renderDesignPdf.ts
-@@ -1,9 +1,945 @@
--import { PDFDocument } from "pdf-lib";
--
--export async function renderDesignReportPdf(data: any): Promise<Uint8Array> {
--  const pdfDoc = await PDFDocument.create();
--  const page = pdfDoc.addPage([595, 842]);
--  const { height } = page.getSize();
--  page.drawText("Rapport Mensuel", { x: 50, y: height - 50, size: 24 });
--  return await pdfDoc.save();
+@@ -1,182 +1,945 @@
+-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 +/**
 + * lib/renderDesignPdf.ts
 + * ======================
@@ -268,10 +19,13 @@ index 423a647..d76f00a 100644
 +
 +import { PDFDocument, PDFFont, PDFImage, PDFPage, rgb } from "pdf-lib";
 +import fontkit from "@pdf-lib/fontkit";
-+import type { ReportData } from "./reportData";
+ import type { ReportData } from "./reportData";
 +import type { ReportContext } from "./types";
 +import { CLIENT_ASSETS, FONTS, ICONS, IMAGES } from "./reportAssets";
-+
+ 
+-const NAVY = rgb(0.106, 0.122, 0.369); // #1B1F5E
+-const GREY = rgb(0.4, 0.4, 0.4);
+-const LIGHT = rgb(0.93, 0.94, 0.98);
 +// ---------------------------------------------------------------------------
 +// Palette (échantillonnée sur le rapport de référence)
 +// ---------------------------------------------------------------------------
@@ -288,28 +42,38 @@ index 423a647..d76f00a 100644
 +const CIRCLE_3 = rgb(0x9b / 255, 0xa0 / 255, 0xbe / 255);
 +const GREY_TEXT = rgb(0.42, 0.44, 0.52);
 +const GRID_LINE = rgb(0.9, 0.91, 0.95);
-+
+ 
+-const A4: [number, number] = [595, 842];
+-const MARGIN = 50;
 +const PAGE_W = 960;
 +const PAGE_H = 540;
 +const S = 0.5;
-+
+ 
+-/** toLocaleString("fr-FR") insère des espaces fines insécables (U+202F)
+- * que la police WinAnsi de pdf-lib ne peut pas encoder — on les remplace. */
 +// ---------------------------------------------------------------------------
 +// Utilitaires
 +// ---------------------------------------------------------------------------
-+function cleanSpaces(s: string): string {
-+  return s.replace(/[\u202f\u00a0]/g, " ");
-+}
+ function cleanSpaces(s: string): string {
+   return s.replace(/[\u202f\u00a0]/g, " ");
+ }
+-
+-function fmt(v: number | null | undefined, suffix = ""): string {
 +function nf(v: number | null | undefined, digits = 0): string {
-+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+   if (v === null || v === undefined || Number.isNaN(v)) return "-";
+-  return cleanSpaces(`${Number(v).toLocaleString("fr-FR")}${suffix}`);
 +  return cleanSpaces(
 +    Number(v).toLocaleString("fr-FR", {
 +      minimumFractionDigits: digits,
 +      maximumFractionDigits: digits,
 +    })
 +  );
-+}
+ }
+-
+-function money(v: number | null | undefined): string {
 +function eur(v: number | null | undefined): string {
-+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+   if (v === null || v === undefined || Number.isNaN(v)) return "-";
+-  return cleanSpaces(`${Number(v).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR`);
 +  return `${nf(Number(v), 2)} € HT`;
 +}
 +function pct(v: number | null | undefined, digits = 0): string {
@@ -320,8 +84,9 @@ index 423a647..d76f00a 100644
 +  if (v === null || v === undefined) return null;
 +  const n = Number(v);
 +  return Number.isNaN(n) ? null : n;
-+}
-+
+ }
+ 
+-interface Cursor {
 +interface Fonts {
 +  reg: PDFFont;
 +  med: PDFFont;
@@ -332,15 +97,21 @@ index 423a647..d76f00a 100644
 +
 +interface Ctx {
 +  doc: PDFDocument;
-+  page: PDFPage;
+   page: PDFPage;
+-  y: number;
 +  f: Fonts;
 +  icons: Record<string, PDFImage>;
 +  logoClient: PDFImage | null;
 +  logoMba: PDFImage;
 +  cover: PDFImage | null;
 +  r: ReportContext;
-+}
-+
+ }
+ 
+-export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Array> {
+-  const ctx = data.context;
+-  const doc = await PDFDocument.create();
+-  const font = await doc.embedFont(StandardFonts.Helvetica);
+-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 +const X = (x: number) => x * S;
 +const Y = (yTop: number, h = 0) => PAGE_H - yTop * S - h * S;
 +
@@ -359,7 +130,8 @@ index 423a647..d76f00a 100644
 +    color,
 +  });
 +}
-+
+ 
+-  const cur: Cursor = { page: doc.addPage(A4), y: A4[1] - MARGIN };
 +interface TextOpts {
 +  size: number;
 +  font?: PDFFont;
@@ -367,7 +139,11 @@ index 423a647..d76f00a 100644
 +  align?: "left" | "center" | "right";
 +  maxW?: number;
 +}
-+
+ 
+-  const ensureSpace = (needed: number) => {
+-    if (cur.y - needed < MARGIN) {
+-      cur.page = doc.addPage(A4);
+-      cur.y = A4[1] - MARGIN;
 +function txt(c: Ctx, s: string, x: number, yTop: number, o: TextOpts) {
 +  const font = o.font ?? c.f.reg;
 +  const size = o.size * S;
@@ -377,7 +153,8 @@ index 423a647..d76f00a 100644
 +    const maxW = o.maxW * S;
 +    while (str.length > 1 && font.widthOfTextAtSize(str, size) > maxW) {
 +      str = str.slice(0, -1);
-+    }
+     }
+-  };
 +    if (str !== original) str = str.slice(0, -1) + "…";
 +  }
 +  const w = font.widthOfTextAtSize(str, size);
@@ -413,7 +190,17 @@ index 423a647..d76f00a 100644
 +    align: "right",
 +  });
 +}
-+
+ 
+-  const text = (
+-    s: string,
+-    opts: { x?: number; size?: number; font?: PDFFont; color?: any } = {}
+-  ) => {
+-    cur.page.drawText(s, {
+-      x: opts.x ?? MARGIN,
+-      y: cur.y,
+-      size: opts.size ?? 10,
+-      font: opts.font ?? font,
+-      color: opts.color ?? rgb(0, 0, 0),
 +function footerLogos(c: Ctx, yTop = 990) {
 +  const h = 52;
 +  let xRight = 1860;
@@ -432,7 +219,8 @@ index 423a647..d76f00a 100644
 +      size: 22,
 +      font: c.f.bold,
 +      align: "right",
-+    });
+     });
+-  };
 +  }
 +}
 +
@@ -440,7 +228,17 @@ index 423a647..d76f00a 100644
 +  const parts = label.trim().split(/\s+/);
 +  return { month: parts[0] ?? label, year: parts[1] ?? "" };
 +}
-+
+ 
+-  const heading = (s: string) => {
+-    ensureSpace(40);
+-    cur.y -= 24;
+-    text(s, { size: 14, font: bold, color: NAVY });
+-    cur.y -= 6;
+-    cur.page.drawLine({
+-      start: { x: MARGIN, y: cur.y },
+-      end: { x: A4[0] - MARGIN, y: cur.y },
+-      thickness: 1,
+-      color: NAVY,
 +function card(
 +  c: Ctx,
 +  x: number,
@@ -477,15 +275,47 @@ index 423a647..d76f00a 100644
 +      font: l.big ? c.f.med : c.f.reg,
 +      color: l.big ? NAVY : GREY_TEXT,
 +      maxW: w - 80,
-+    });
+     });
+-    cur.y -= 14;
+-  };
 +    ty += l.big ? 34 : 27;
 +  }
 +}
-+
+ 
+-  const kv = (label: string, value: string) => {
+-    ensureSpace(16);
+-    text(label, { size: 10, color: GREY });
+-    text(value, { x: 280, size: 10, font: bold });
+-    cur.y -= 16;
+-  };
 +// ---------------------------------------------------------------------------
 +// Pages
 +// ---------------------------------------------------------------------------
-+
+ 
+-  // ---- En-tete ----
+-  text(ctx.client.logo_text || ctx.client.display_name, { size: 22, font: bold, color: NAVY });
+-  cur.y -= 26;
+-  text(`Rapport mensuel client — ${ctx.month_label}`, { size: 13, color: NAVY });
+-  cur.y -= 14;
+-  text(`Généré le ${ctx.generated_at}`, { size: 9, color: GREY });
+-  cur.y -= 4;
+-
+-  // ---- KPI ----
+-  heading("Indicateurs clés");
+-  kv("Nombre de références (SKU)", fmt(ctx.kpi.sku_count));
+-  kv("Pièces consommées", fmt(ctx.kpi.pieces_consumed));
+-  kv("CA réel H.T.", money(ctx.kpi.ca_actual));
+-  kv("CA prévisionnel H.T.", money(ctx.kpi.ca_forecast));
+-  kv("Taux de performance", fmt(ctx.kpi.performance_rate, " %"));
+-  kv("Nombre de commandes", fmt(ctx.kpi.total_commandes));
+-  kv("Total cartons", fmt(ctx.kpi.total_cartons));
+-  kv("Taux de réussite livraison", fmt(ctx.kpi.taux_reussite, " %"));
+-
+-  // ---- Articles ----
+-  heading("Articles — prévisionnel vs consommation (cartons)");
+-  if (ctx.articles.length === 0) {
+-    text("Aucune donnée article pour ce mois.", { size: 10, color: GREY });
+-    cur.y -= 16;
 +function pageCover(c: Ctx) {
 +  newPage(c, LAVENDER_BG);
 +  const { month, year } = monthYear(c.r.month_label);
@@ -506,19 +336,56 @@ index 423a647..d76f00a 100644
 +    corner(ix + w, iy + h, -1, 1); // haut-droit
 +    corner(ix, iy, 1, -1); // bas-gauche
 +    corner(ix + w, iy, -1, -1); // bas-droit
-+  } else {
+   } else {
+-    const cols = [MARGIN, 170, 330, 400, 470];
+-    ensureSpace(18);
+-    cur.page.drawRectangle({
+-      x: MARGIN - 4,
+-      y: cur.y - 4,
+-      width: A4[0] - 2 * MARGIN + 8,
+-      height: 16,
+-      color: LIGHT,
 +    rrect(c, 424, 240, 1072, 443, 26, NAVY);
 +    txt(c, c.r.client.logo_text || c.r.client.display_name, 960, 420, {
 +      size: 72,
 +      font: c.f.xbold,
 +      align: "center",
 +      color: WHITE,
-+    });
-+  }
+     });
+-    text("Code", { x: cols[0], size: 9, font: bold });
+-    text("Description", { x: cols[1], size: 9, font: bold });
+-    text("Prévu", { x: cols[2], size: 9, font: bold });
+-    text("Conso", { x: cols[3], size: 9, font: bold });
+-    text("Taux", { x: cols[4], size: 9, font: bold });
+-    cur.y -= 18;
+-    for (const a of ctx.articles) {
+-      ensureSpace(14);
+-      text(a.code.slice(0, 22), { x: cols[0], size: 8 });
+-      text((a.description || "").slice(0, 32), { x: cols[1], size: 8 });
+-      text(fmt(a.forecast), { x: cols[2], size: 8 });
+-      text(fmt(a.consumption), { x: cols[3], size: 8 });
+-      text(fmt(a.rate, " %"), { x: cols[4], size: 8 });
+-      cur.y -= 13;
+-    }
+   }
 +  txt(c, month, 118, 930, { size: 44, font: c.f.med });
 +  txt(c, year, 1842, 930, { size: 44, font: c.f.med, align: "right" });
 +}
-+
+ 
+-  // ---- Stock / transit ----
+-  heading("Stock & transit (projection hebdomadaire)");
+-  if (ctx.stock_status.length === 0) {
+-    text("Aucune donnée de stock disponible.", { size: 10, color: GREY });
+-    cur.y -= 16;
+-  } else {
+-    for (const item of ctx.stock_status) {
+-      ensureSpace(16);
+-      const weeks = item.weeks
+-        .map((w) => `S${w.week}: ${fmt(w.stock)}`)
+-        .join("   ");
+-      text(item.code, { size: 9, font: bold });
+-      text(weeks, { x: 180, size: 8 });
+-      cur.y -= 14;
 +function pageKpi(c: Ctx) {
 +  newPage(c);
 +  pageNumber(c, 2);
@@ -606,7 +473,7 @@ index 423a647..d76f00a 100644
 +        size: 15,
 +        font: c.f.med,
 +      });
-+    }
+     }
 +    if (a.rate !== null) {
 +      const pw = 74,
 +        ph = 26;
@@ -647,7 +514,7 @@ index 423a647..d76f00a 100644
 +      ly += 29;
 +    }
 +    txt(c, ci.value, 1718, ly + 8, { size: 21, font: c.f.bold, align: "center" });
-+  }
+   }
 +}
 +
 +function pageStock(c: Ctx) {
@@ -659,7 +526,36 @@ index 423a647..d76f00a 100644
 +  const items = c.r.stock_status.slice(0, 6);
 +  const weeks = items[0]?.weeks?.map((w) => w.week) ?? [];
 +  const nW = Math.min(weeks.length, 8);
-+
+ 
+-  // ---- Logistique ----
+-  heading("Logistique (GEODIS + GLS via Supabase)");
+-  kv("Restaurants livrés", fmt(ctx.logistics.restaurants_livres));
+-  kv("Corner Wasabi", fmt(ctx.logistics.corner_wasabi));
+-  kv("Total commandes", fmt(ctx.logistics.total_commandes));
+-  kv("Total cartons", fmt(ctx.logistics.total_cartons));
+-  kv("Total poids", fmt(ctx.logistics.total_poids, " kg"));
+-  kv("Part GEODIS", fmt(ctx.logistics.geodis_share, " %"));
+-  kv("Part GLS", fmt(ctx.logistics.gls_share, " %"));
+-  kv("GEODIS — cartons", fmt(ctx.logistics.geodis.total_cartons));
+-  kv("GEODIS — délai moyen (jours)", fmt(ctx.logistics.geodis.moyenne_jours));
+-  kv("GLS — colis", fmt(ctx.logistics.gls.total_cartons));
+-  kv("GLS — délai moyen (jours)", fmt(ctx.logistics.gls.moyenne_jours));
+-
+-  // ---- Finances ----
+-  heading("Données financières");
+-  kv("CA total H.T.", money(ctx.financials.ca_total ?? null));
+-  kv("Nombre de commandes", String(ctx.financials.nombre_commande ?? "-"));
+-  kv("RFAs / Commissions", String(ctx.financials.commissions ?? "-"));
+-
+-  // ---- Pied de page ----
+-  const pages = doc.getPages();
+-  pages.forEach((p, i) => {
+-    p.drawText(`MBA Green — ${ctx.client.display_name} — ${ctx.month_label} — page ${i + 1}/${pages.length}`, {
+-      x: MARGIN,
+-      y: 28,
+-      size: 8,
+-      font,
+-      color: GREY,
 +  rrect(c, 258, 62, 262, 44, 22, NAVY);
 +  txt(c, "PRÉVISIONS / STOCK / EN TRANSIT", 389, 79, {
 +    size: 11,
@@ -714,8 +610,8 @@ index 423a647..d76f00a 100644
 +          txt(c, nf(v), x + colW / 2, yR + 8, { size: 14, font: c.f.semi, align: "center" });
 +        }
 +      }
-+    });
-+  });
+     });
+   });
 +  txt(c, "Voir le rapport complet en annexe", 960, 1020, {
 +    size: 24,
 +    font: c.f.bold,
@@ -1195,8 +1091,8 @@ index 423a647..d76f00a 100644
 +  );
 +  pageFinancials(c);
 +  pageClosing(c);
-+
-+  return await doc.save();
+ 
+   return await doc.save();
  }
 diff --git a/lib/reportAssets.ts b/lib/reportAssets.ts
 new file mode 100644
@@ -1219,105 +1115,6 @@ index 0000000..9e2bc77
 +export const CLIENT_ASSETS: Record<string, { coverJpg?: string; logo?: string }> = {
 +  POKAWA: { coverJpg: IMAGES.coverPokawaJpg, logo: IMAGES.logoPokawa },
 +};
-diff --git a/lib/supabaseLogistics.ts b/lib/supabaseLogistics.ts
-index b035c34..386c44a 100644
---- a/lib/supabaseLogistics.ts
-+++ b/lib/supabaseLogistics.ts
-@@ -31,10 +31,16 @@ export interface SupabaseGlsResult {
-   by_country: Record<string, { count: number; poids: number }>;
- }
- 
--const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
--const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
--
--const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-+function getSupabase() {
-+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-+  if (!url || !key) {
-+    throw new Error(
-+      "Variables d'environnement Supabase manquantes (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)"
-+    );
-+  }
-+  return createClient(url, key);
-+}
- 
- // ============================================================
- // UTILITY FUNCTIONS (shared with parsers.ts)
-@@ -154,7 +160,7 @@ export async function fetchGeodisFromSupabase(
-   const holidays = frenchHolidays(startDate.getFullYear());
- 
-   try {
--    const { data, error } = await supabase
-+    const { data, error } = await getSupabase()
-       .from("shipments")
-       .select("*")
-       .eq("code_client", clientCfg.code_geodis)
-@@ -259,7 +265,7 @@ export async function fetchGlsFromSupabase(
-   const holidays = frenchHolidays(startDate.getFullYear());
- 
-   try {
--    const { data, error } = await supabase
-+    const { data, error } = await getSupabase()
-       .from("gls_parcels")
-       .select("*")
-       .eq("code_client", clientCfg.code_gls)
-@@ -350,3 +356,55 @@ export async function fetchGlsFromSupabase(
-     };
-   }
- }
-+
-+// ============================================================
-+// ADAPTATEURS -> types complets du rapport (GeodisResult / GlsResult)
-+// Les fonctions Supabase ne fournissent qu'un sous-ensemble des champs ;
-+// le reste est neutre (0 / null / vide) tant que les colonnes
-+// correspondantes n'existent pas dans Supabase.
-+// ============================================================
-+
-+import type { GeodisResult, GlsResult, CountryStats, ServiceStats } from "./types";
-+
-+const emptyCountryStats = (): CountryStats => ({ total_commandes: 0, livrees: 0, rate: null });
-+const emptyServiceStats = (): ServiceStats => ({ total_commandes: 0, livrees: 0, rate: null });
-+
-+export function toGeodisResult(s: SupabaseGeodisResult): GeodisResult {
-+  return {
-+    restaurant_names: new Set<string>(),
-+    restaurants_livres: 0,
-+    total_commandes: 0,
-+    total_cartons: s.total_cartons,
-+    total_poids: s.total_poids,
-+    taux_reussite: null,
-+    france: emptyCountryStats(),
-+    belgique_lux: emptyCountryStats(),
-+    express: emptyServiceStats(),
-+    affretement: emptyServiceStats(),
-+    express_delay: { total: 0, within_24h: 0, rate: null },
-+    moyenne_jours: s.moyenne_jours,
-+    moyenne_cmds_cartons: null,
-+    moyenne_cmds_poids: null,
-+    corner_wasabi_count: s.corner_wasabi_count,
-+    respect_horaires_12h: null,
-+    respect_horaires_11h: null,
-+  };
-+}
-+
-+export function toGlsResult(s: SupabaseGlsResult): GlsResult {
-+  const by_country: Record<string, number> = {};
-+  for (const [country, v] of Object.entries(s.by_country)) by_country[country] = v.count;
-+  return {
-+    restaurant_names: new Set<string>(),
-+    restaurants_livres: 0,
-+    // GLS: 1 colis = 1 carton dans les exports d'origine
-+    total_commandes: null,
-+    total_cartons: s.total_parcels,
-+    total_poids: s.total_poids,
-+    by_country,
-+    moyenne_jours: s.moyenne_jours,
-+    moyenne_cmds_cartons: null,
-+    moyenne_cmds_poids: null,
-+    corner_wasabi_count: s.corner_wasabi_count,
-+  };
-+}
 diff --git a/package.json b/package.json
 index dd7097b..9875317 100644
 --- a/package.json
