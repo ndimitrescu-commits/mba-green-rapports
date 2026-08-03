@@ -1,69 +1,77 @@
 import { NextResponse } from "next/server";
-import { buildSystemPrompt, parseQualified } from "@/lib/chatPrompt";
-import { callClaude } from "@/lib/claude";
-import { sendTriggerEmail } from "@/lib/gmail";
+import { buildReportContextWithLogistics, loadClientConfig, parseMonthLabel } from "@/lib/compute";
+import {
+  fetchGeodisFromSupabase,
+  fetchGlsFromSupabase,
+  toGeodisResult,
+  toGlsResult,
+} from "@/lib/supabaseLogistics";
+import { buildReportData } from "@/lib/reportData";
+import { renderDesignReportPdf } from "@/lib/renderDesignPdf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
- * POST /api/chat
- *  - action "trigger" : { brief, requesterEmail, source } -> envoie l'email de déclenchement (JSON)
- *  - sinon (conversation) : { messages, prenom, role } -> { text, qualified, brief } (JSON)
- *    (l'effet typewriter est géré côté client)
+ * POST /api/generate
+ * FormData: { client, month_label }
+ * Les données logistiques GEODIS/GLS sont récupérées depuis Supabase
+ * (tables alimentées par les workers Railway) — plus d'upload de fichiers.
+ * Retourne le PDF du rapport mensuel.
  */
 export async function POST(req: Request) {
-  let body: any;
+  let clientKey = "";
+  let monthLabel = "";
   try {
-    body = await req.json();
+    const form = await req.formData();
+    clientKey = String(form.get("client") ?? "");
+    monthLabel = String(form.get("month_label") ?? "");
   } catch {
-    return new NextResponse("Requête invalide", { status: 400 });
+    return NextResponse.json({ error: "Requête invalide (FormData attendu)." }, { status: 400 });
   }
 
-  if (body.action === "trigger") {
-    const brief = body.brief || {};
-    const webhookUrl = process.env.APPS_SCRIPT_WEBHOOK_URL;
-    const secret = process.env.WEBHOOK_SECRET;
-
-    // Déclenchement instantané via Web App Apps Script (si configuré)
-    if (webhookUrl && secret) {
-      try {
-        const r = await fetch(webhookUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ secret, brief }),
-        });
-        const data: any = await r.json().catch(() => ({}));
-        if (!r.ok || data.error) throw new Error(data.error || `Webhook HTTP ${r.status}`);
-        return NextResponse.json({ ok: true, instant: true, ...data });
-      } catch (e: any) {
-        // Repli sur l'email de déclenchement si le webhook échoue
-        try {
-          const info = await sendTriggerEmail(brief, body.source || "Chat dashboard", body.requesterEmail || "inconnu");
-          return NextResponse.json({ ok: true, instant: false, fallback: true, webhookError: e.message, ...info });
-        } catch (e2: any) {
-          return new NextResponse(e2.message || "Erreur déclenchement", { status: 500 });
-        }
-      }
-    }
-
-    // Sinon : ancien comportement (email de déclenchement, polling 15 min)
-    try {
-      const info = await sendTriggerEmail(brief, body.source || "Chat dashboard", body.requesterEmail || "inconnu");
-      return NextResponse.json({ ok: true, instant: false, ...info });
-    } catch (e: any) {
-      return new NextResponse(e.message || "Erreur déclenchement", { status: 500 });
-    }
+  if (!clientKey || !monthLabel) {
+    return NextResponse.json({ error: "Client et mois requis." }, { status: 400 });
   }
 
   try {
-    const messages = (body.messages || []).filter((m: any) => m && m.content);
-    const system = buildSystemPrompt(body.prenom || "", body.role || "");
-    const reply = await callClaude(messages, system, 1024);
-    const { qualified, brief, clean } = parseQualified(reply);
-    // si qualifié, ne jamais renvoyer le bloc QUALIFIED brut (clean peut être vide)
-    return NextResponse.json({ text: clean, qualified, brief });
+    const cfg = loadClientConfig(clientKey);
+    const month = parseMonthLabel(monthLabel);
+    const startDate = new Date(`${month.dateFrom}T00:00:00`);
+    const endDate = new Date(`${month.dateTo}T23:59:59`);
+
+    const [geodisRaw, glsRaw] = await Promise.all([
+      fetchGeodisFromSupabase(cfg, startDate, endDate),
+      fetchGlsFromSupabase(cfg, startDate, endDate),
+    ]);
+
+    const context = await buildReportContextWithLogistics(
+      clientKey,
+      monthLabel,
+      toGeodisResult(geodisRaw),
+      toGlsResult(glsRaw)
+    );
+
+    const data = buildReportData(context);
+    const pdfBytes = await renderDesignReportPdf(data);
+
+    const safeMonth = monthLabel.replace(/\s+/g, "_");
+    const filename = `Rapport_${cfg.display_name}_${safeMonth}.pdf`;
+
+    return new NextResponse(Buffer.from(pdfBytes), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (e: any) {
-    return new NextResponse(e.message || "Erreur Claude", { status: 500 });
+    console.error("Erreur génération rapport:", e);
+    return NextResponse.json(
+      { error: e?.message || "Erreur pendant la génération." },
+      { status: 500 }
+    );
   }
 }

@@ -167,14 +167,8 @@ export default function HomePage() {
           </div>
 
           <div style={hintStyle}>
-            Prévisions, consommation, stock/transit et données financières sont désormais récupérés automatiquement.
+            Prévisions, consommation, stock/transit, données financières et logistique GEODIS/GLS (Supabase) sont récupérés automatiquement — plus aucun fichier à importer.
           </div>
-
-          <label style={labelStyle}>Fichier GEODIS (optionnel)</label>
-          <input type="file" name="geodis" accept=".xlsx" style={fileInputStyle} />
-
-          <label style={labelStyle}>Fichier GLS (optionnel)</label>
-          <input type="file" name="gls" accept=".csv" style={fileInputStyle} />
 
           <button
             type="submit"
@@ -214,12 +208,6 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 8,
   border: "1px solid #ccc",
   fontSize: 14,
-};
-
-const fileInputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "8px 0",
-  fontSize: 13,
 };
 
 const hintStyle: React.CSSProperties = {

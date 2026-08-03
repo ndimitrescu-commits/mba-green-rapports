@@ -31,10 +31,16 @@ export interface SupabaseGlsResult {
   by_country: Record<string, { count: number; poids: number }>;
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  if (!url || !key) {
+    throw new Error(
+      "Variables d'environnement Supabase manquantes (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)"
+    );
+  }
+  return createClient(url, key);
+}
 
 // ============================================================
 // UTILITY FUNCTIONS (shared with parsers.ts)
@@ -154,7 +160,7 @@ export async function fetchGeodisFromSupabase(
   const holidays = frenchHolidays(startDate.getFullYear());
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("shipments")
       .select("*")
       .eq("code_client", clientCfg.code_geodis)
@@ -259,7 +265,7 @@ export async function fetchGlsFromSupabase(
   const holidays = frenchHolidays(startDate.getFullYear());
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("gls_parcels")
       .select("*")
       .eq("code_client", clientCfg.code_gls)
@@ -349,4 +355,56 @@ export async function fetchGlsFromSupabase(
       by_country: {},
     };
   }
+}
+
+// ============================================================
+// ADAPTATEURS -> types complets du rapport (GeodisResult / GlsResult)
+// Les fonctions Supabase ne fournissent qu'un sous-ensemble des champs ;
+// le reste est neutre (0 / null / vide) tant que les colonnes
+// correspondantes n'existent pas dans Supabase.
+// ============================================================
+
+import type { GeodisResult, GlsResult, CountryStats, ServiceStats } from "./types";
+
+const emptyCountryStats = (): CountryStats => ({ total_commandes: 0, livrees: 0, rate: null });
+const emptyServiceStats = (): ServiceStats => ({ total_commandes: 0, livrees: 0, rate: null });
+
+export function toGeodisResult(s: SupabaseGeodisResult): GeodisResult {
+  return {
+    restaurant_names: new Set<string>(),
+    restaurants_livres: 0,
+    total_commandes: 0,
+    total_cartons: s.total_cartons,
+    total_poids: s.total_poids,
+    taux_reussite: null,
+    france: emptyCountryStats(),
+    belgique_lux: emptyCountryStats(),
+    express: emptyServiceStats(),
+    affretement: emptyServiceStats(),
+    express_delay: { total: 0, within_24h: 0, rate: null },
+    moyenne_jours: s.moyenne_jours,
+    moyenne_cmds_cartons: null,
+    moyenne_cmds_poids: null,
+    corner_wasabi_count: s.corner_wasabi_count,
+    respect_horaires_12h: null,
+    respect_horaires_11h: null,
+  };
+}
+
+export function toGlsResult(s: SupabaseGlsResult): GlsResult {
+  const by_country: Record<string, number> = {};
+  for (const [country, v] of Object.entries(s.by_country)) by_country[country] = v.count;
+  return {
+    restaurant_names: new Set<string>(),
+    restaurants_livres: 0,
+    // GLS: 1 colis = 1 carton dans les exports d'origine
+    total_commandes: null,
+    total_cartons: s.total_parcels,
+    total_poids: s.total_poids,
+    by_country,
+    moyenne_jours: s.moyenne_jours,
+    moyenne_cmds_cartons: null,
+    moyenne_cmds_poids: null,
+    corner_wasabi_count: s.corner_wasabi_count,
+  };
 }
