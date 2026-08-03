@@ -1,4 +1,4 @@
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(prenom: string, role: string): string {
   return "";
 }
 
