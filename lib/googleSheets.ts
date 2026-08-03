@@ -19,6 +19,19 @@ import { google, sheets_v4 } from "googleapis";
 
 const DEFAULT_SHEET_ID = "1fOrdej1AT9bVbf1-McY3Xtgnf_QPwnFuOekucQAvyog";
 
+/**
+ * Classeur "MBA_Green_Demand_Planning_v2.6" — onglet "Forecast_Client" :
+ * prévisions HEBDOMADAIRES par SKU (colonnes S1..S53 = semaines ISO de
+ * l'année en cours), tous clients confondus. Sert de repli quand un mois
+ * n'a pas été importé dans le Prévisionnel Clients (ex. juillet 2026,
+ * l'import du 20/07 ne couvrant qu'août→décembre).
+ */
+const DEFAULT_DEMAND_PLANNING_SHEET_ID = "1s1U_ANuVhp39ADUl0JYbT6w84OQSO98EwVCEENs0MS8";
+
+function demandPlanningSheetId(): string {
+  return process.env.DEMAND_PLANNING_SHEET_ID || DEFAULT_DEMAND_PLANNING_SHEET_ID;
+}
+
 /** Onglet du Prévisionnel pour chaque clé client de clients.json. */
 const CLIENT_TABS: Record<string, string> = {
   POKAWA: "Pokawa",
@@ -72,11 +85,11 @@ function getSheetsClient(): { sheets: sheets_v4.Sheets; email: string } {
  *  - lignes collées dans une seule cellule avec des tabulations (cas observé
  *    sur l'en-tête de l'onglet "Prix") : re-découpées sur "\t".
  */
-async function readRange(range: string): Promise<unknown[][]> {
+async function readRange(range: string, spreadsheetId: string = sheetId()): Promise<unknown[][]> {
   const { sheets, email } = getSheetsClient();
   try {
     const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId(),
+      spreadsheetId,
       range,
       valueRenderOption: "UNFORMATTED_VALUE",
     });
@@ -90,8 +103,8 @@ async function readRange(range: string): Promise<unknown[][]> {
     const err = e as { code?: number; message?: string };
     if (err.code === 403 || err.code === 404) {
       throw new Error(
-        `Google Sheets ${err.code} sur "${range}" : vérifier que le classeur Prévisionnel ` +
-          `(${sheetId()}) est partagé en lecteur avec ${email}.`
+        `Google Sheets ${err.code} sur "${range}" : vérifier que le classeur ` +
+          `(${spreadsheetId}) est partagé en lecteur avec ${email}.`
       );
     }
     throw new Error(`Google Sheets — échec de lecture de "${range}" : ${err.message ?? String(e)}`);
@@ -125,7 +138,64 @@ function tabForClient(clientKey: string): string {
   return tab;
 }
 
-/** Prévisions mensuelles (cartons) du client, tous mois présents dans l'onglet. */
+/** Jeudi de la semaine ISO `week` de l'année `year` (le jeudi détermine le
+ * mois d'appartenance d'une semaine ISO). */
+function isoWeekThursday(year: number, week: number): Date {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7));
+  const thursday = new Date(monday);
+  thursday.setUTCDate(monday.getUTCDate() + (week - 1) * 7 + 3);
+  return thursday;
+}
+
+/**
+ * Prévisions hebdomadaires globales (tous clients) du Demand Planning,
+ * onglet "Forecast_Client" : Map référence -> Map semaine ISO -> cartons.
+ * Les SKU avec Active = FALSE sont ignorés.
+ */
+async function readGlobalWeeklyForecast(): Promise<Map<string, Map<number, number>>> {
+  const rows = await readRange(`'Forecast_Client'!A2:BE`, demandPlanningSheetId());
+  const out = new Map<string, Map<number, number>>();
+  if (rows.length === 0) return out;
+
+  // Ligne d'en-tête : SKU | Active | Client | Notes | S1 | S2 | ...
+  const headerIdx = rows.findIndex((r) => str(r[0]).toUpperCase() === "SKU");
+  if (headerIdx === -1) return out;
+  const header = rows[headerIdx].map(str);
+  const weekCols: { col: number; week: number }[] = [];
+  header.forEach((h, col) => {
+    const m = /^S(\d{1,2})$/i.exec(h);
+    if (m) weekCols.push({ col, week: Number(m[1]) });
+  });
+
+  for (const raw of rows.slice(headerIdx + 1)) {
+    const cells = raw.map(str);
+    const sku = cells[0];
+    // Écarte lignes vides et lignes d'info (un vrai SKU n'a pas d'espace).
+    if (!sku || /\s/.test(sku)) continue;
+    if (cells[1].toUpperCase() === "FALSE") continue;
+    const weeks = new Map<number, number>();
+    for (const { col, week } of weekCols) {
+      const qty = num(raw[col]);
+      if (Number.isFinite(qty) && qty !== 0) weeks.set(week, qty);
+    }
+    if (weeks.size > 0) out.set(sku, weeks);
+  }
+  return out;
+}
+
+/**
+ * Prévisions mensuelles (cartons) du client.
+ * Source primaire : l'onglet client du Prévisionnel (mensuel, par client).
+ * Repli : pour les mois absents de l'onglet (ex. juillet 2026), agrégation
+ * mensuelle des prévisions hebdomadaires du Demand Planning
+ * ("Forecast_Client", semaines ISO de l'année en cours), restreinte aux
+ * références déjà listées pour ce client dans le Prévisionnel.
+ * ⚠️ Limite connue : la colonne "Client" de Forecast_Client étant vide, une
+ * référence partagée entre clients (ex. LID149PP Pokawa/Krousty) y porte le
+ * volume global tous clients — le repli surestime alors ce SKU.
+ */
 export async function readForecast(clientKey: string): Promise<ForecastRow[]> {
   const rows = await readRange(`'${tabForClient(clientKey)}'!A1:C`);
   const out: ForecastRow[] = [];
@@ -137,6 +207,37 @@ export async function readForecast(clientKey: string): Promise<ForecastRow[]> {
     const qty = num(raw[2]);
     if (!reference || !/^\d{4}-\d{2}$/.test(month) || !Number.isFinite(qty)) continue;
     out.push({ reference, month, quantity_cartons: qty });
+  }
+
+  // Repli hebdomadaire pour les mois non couverts par le Prévisionnel.
+  const clientRefs = new Set(out.map((r) => r.reference));
+  if (clientRefs.size === 0) return out; // pas d'univers client -> pas de repli scoping possible
+  const monthsCovered = new Set(out.map((r) => r.month));
+
+  let weekly: Map<string, Map<number, number>>;
+  try {
+    weekly = await readGlobalWeeklyForecast();
+  } catch {
+    return out; // le repli ne doit jamais faire échouer la génération
+  }
+
+  const year = new Date().getUTCFullYear();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fallback = new Map<string, number>(); // `${month}|${ref}` -> cartons
+  for (const ref of clientRefs) {
+    const weeks = weekly.get(ref);
+    if (!weeks) continue;
+    for (const [week, qty] of weeks) {
+      const th = isoWeekThursday(year, week);
+      const month = `${th.getUTCFullYear()}-${pad(th.getUTCMonth() + 1)}`;
+      if (monthsCovered.has(month)) continue;
+      const key = `${month}|${ref}`;
+      fallback.set(key, (fallback.get(key) ?? 0) + qty);
+    }
+  }
+  for (const [key, qty] of fallback) {
+    const [month, reference] = key.split("|");
+    out.push({ reference, month, quantity_cartons: Math.round(qty) });
   }
   return out;
 }
