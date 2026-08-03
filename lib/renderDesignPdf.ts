@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 
-export async function renderDesignReportPdf(data: any): Promise<ArrayBuffer> {
+export async function renderDesignReportPdf(data: any): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595, 842]);
   const { height } = page.getSize();

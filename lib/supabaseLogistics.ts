@@ -6,7 +6,30 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import type { GeodisResult, GlsResult } from "./types";
+export interface DelayBuckets {
+  on_time: number;
+  late_1_3: number;
+  late_4_7: number;
+  late_7plus: number;
+}
+
+export interface SupabaseGeodisResult {
+  total_cartons: number;
+  total_poids: number;
+  moyenne_jours: number;
+  corner_wasabi_count: number;
+  delay_buckets: DelayBuckets;
+  by_country: Record<string, { count: number; poids: number }>;
+}
+
+export interface SupabaseGlsResult {
+  total_parcels: number;
+  total_poids: number;
+  moyenne_jours: number;
+  corner_wasabi_count: number;
+  delay_buckets: DelayBuckets;
+  by_country: Record<string, { count: number; poids: number }>;
+}
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -127,7 +150,7 @@ export async function fetchGeodisFromSupabase(
   clientCfg: any,
   startDate: Date,
   endDate: Date
-): Promise<GeodisResult> {
+): Promise<SupabaseGeodisResult> {
   const holidays = frenchHolidays(startDate.getFullYear());
 
   try {
@@ -232,7 +255,7 @@ export async function fetchGlsFromSupabase(
   clientCfg: any,
   startDate: Date,
   endDate: Date
-): Promise<GlsResult> {
+): Promise<SupabaseGlsResult> {
   const holidays = frenchHolidays(startDate.getFullYear());
 
   try {

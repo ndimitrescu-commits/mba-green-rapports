@@ -109,6 +109,7 @@ interface ArticlesResult {
   items: ArticleItem[];
   sku_count: number;
   total_cartons_consumed: number;
+  total_pieces_consumed: number;
   ca_forecast: number;
 }
 
@@ -144,8 +145,10 @@ async function buildArticles(
   }
 
   const consumptionMap = new Map<string, { description: string; qty: number }>();
+  let totalPieces = 0;
   for (const row of consumption) {
     consumptionMap.set(row.itemCode, { description: row.description, qty: row.qtyCartons });
+    totalPieces += Number(row.qtyPieces) || 0;
   }
 
   const allCodes = new Set<string>([...forecastMap.keys(), ...consumptionMap.keys()]);
@@ -181,6 +184,7 @@ async function buildArticles(
     items,
     sku_count: items.length,
     total_cartons_consumed: totalCons,
+    total_pieces_consumed: totalPieces,
     ca_forecast: Math.round(totalCaPrev * 100) / 100,
   };
 }

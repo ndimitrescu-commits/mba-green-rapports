@@ -8,8 +8,9 @@ export async function readForecast(clientKey: string): Promise<ForecastRow[]> {
   return [];
 }
 
-export async function readPrices(clientKey: string): Promise<Record<string, number>> {
-  return {};
+/** Prix unitaire par référence (onglet "Prix" du Prévisionnel). */
+export async function readPrices(clientKey: string): Promise<Map<string, number>> {
+  return new Map();
 }
 
 export async function readCommissions(clientKey: string): Promise<any> {

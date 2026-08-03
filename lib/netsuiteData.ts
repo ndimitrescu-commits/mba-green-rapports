@@ -1,15 +1,20 @@
+/** Consommation par référence (cartons + pièces) sur la période. */
 export async function fetchConsumptionCartons(
   parentId: number,
   dateFrom: string,
   dateTo: string
-): Promise<any[]> {
+): Promise<{ itemCode: string; description: string; qtyCartons: number; qtyPieces?: number }[]> {
   return [];
 }
 
-export async function fetchStockOnHand(parentId: number): Promise<any[]> {
-  return [];
+/** Stock disponible (cartons) par code article. */
+export async function fetchStockOnHand(itemCodes: string[]): Promise<Map<string, number>> {
+  return new Map();
 }
 
-export async function fetchTransitByItem(parentId: number): Promise<any[]> {
-  return [];
+/** Lignes de PO en transit par code article (date d'échéance + qté cartons). */
+export async function fetchTransitByItem(
+  itemCodes: string[]
+): Promise<Map<string, { dueDate: string; qtyCartons: number }[]>> {
+  return new Map();
 }
