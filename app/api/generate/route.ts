@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildReportContextWithLogistics, loadClientConfig, parseMonthLabel } from "@/lib/compute";
-import {
-  fetchGeodisFromSupabase,
-  fetchGlsFromSupabase,
-  toGeodisResult,
-  toGlsResult,
-} from "@/lib/supabaseLogistics";
+import { fetchGeodisFromSupabase, fetchGlsFromSupabase } from "@/lib/supabaseLogistics";
 import { buildReportData } from "@/lib/reportData";
 import { renderDesignReportPdf } from "@/lib/renderDesignPdf";
 
@@ -38,20 +33,18 @@ export async function POST(req: Request) {
   try {
     const cfg = loadClientConfig(clientKey);
     const month = parseMonthLabel(monthLabel);
-    const startDate = new Date(`${month.dateFrom}T00:00:00`);
-    const endDate = new Date(`${month.dateTo}T23:59:59`);
+    // Bornes ISO [from, to) — dateTo est le dernier jour du mois, on prend le jour suivant.
+    const from = `${month.dateFrom}T00:00:00Z`;
+    const toExclusive = new Date(new Date(`${month.dateTo}T00:00:00Z`).getTime() + 86400000)
+      .toISOString()
+      .slice(0, 10);
 
-    const [geodisRaw, glsRaw] = await Promise.all([
-      fetchGeodisFromSupabase(cfg, startDate, endDate),
-      fetchGlsFromSupabase(cfg, startDate, endDate),
+    const [geodis, gls] = await Promise.all([
+      fetchGeodisFromSupabase(cfg, from, `${toExclusive}T00:00:00Z`),
+      fetchGlsFromSupabase(cfg, from, `${toExclusive}T00:00:00Z`),
     ]);
 
-    const context = await buildReportContextWithLogistics(
-      clientKey,
-      monthLabel,
-      toGeodisResult(geodisRaw),
-      toGlsResult(glsRaw)
-    );
+    const context = await buildReportContextWithLogistics(clientKey, monthLabel, geodis, gls);
 
     const data = buildReportData(context);
     const pdfBytes = await renderDesignReportPdf(data);
