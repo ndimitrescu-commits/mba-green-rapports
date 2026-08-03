@@ -88,42 +88,65 @@ export async function fetchStockOnHand(itemCodes: string[]): Promise<Map<string,
 }
 
 /**
- * Lignes de PO en transit par code article (date d'échéance + qté cartons).
- * "En transit" = reliquat non reçu (`quantity - quantityshiprecv > 0`) de PO
- * dont la date de réception attendue est dans une fenêtre récente/proche
- * (−90 j / +270 j) — écarte les vieilles lignes ouvertes jamais soldées, qui
- * fausseraient le bucketing par numéro de semaine ISO fait dans compute.ts
- * (le numéro de semaine ne porte pas l'année).
+ * Arrivées par code article (date + qté cartons), pour la ligne « En transit »
+ * de la page 4. Sémantique validée avec Nicolas (03/08/2026) — la page couvre
+ * les semaines du mois du rapport, donc :
+ *  - semaines PASSÉES : réceptions RÉELLES (transactions ItemRcpt, datées du
+ *    jour de réception) — fenêtre SYSDATE − 120 j ;
+ *  - semaines FUTURES : reliquats de PO ouverts (`quantity − quantityshiprecv
+ *    > 0`) à leur date de réception attendue — fenêtre SYSDATE + 270 j.
+ * Un PO en retard (attendu dans le passé, non reçu) n'apparaît pas : il n'est
+ * pas arrivé, il ne doit pas gonfler une semaine passée.
+ * Les fenêtres bornées évitent aussi les collisions de numéros de semaine ISO
+ * (le bucketing de compute.ts ne porte pas l'année).
  */
 export async function fetchTransitByItem(
   itemCodes: string[]
 ): Promise<Map<string, { dueDate: string; qtyCartons: number }[]>> {
   const out = new Map<string, { dueDate: string; qtyCartons: number }[]>();
   if (itemCodes.length === 0) return out;
-  const rows = await suiteql<{
-    itemcode: string;
-    due: string | null;
-    qty_pieces: number;
-    per_carton: number | null;
-  }>(
-    `SELECT i.itemid AS itemcode,
-            TO_CHAR(NVL(tl.expectedreceiptdate, t.duedate), 'YYYY-MM-DD') AS due,
-            SUM(tl.quantity - NVL(tl.quantityshiprecv, 0)) AS qty_pieces,
-            MAX(NVL(u.conversionrate, 1)) AS per_carton
-     FROM transaction t
-     JOIN transactionline tl ON tl.transaction = t.id
-     JOIN item i ON i.id = tl.item
-     LEFT JOIN unitstypeuom u
-       ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
-     WHERE t.type = 'PurchOrd'
-       AND tl.mainline = 'F'
-       AND tl.quantity - NVL(tl.quantityshiprecv, 0) > 0
-       AND NVL(tl.expectedreceiptdate, t.duedate) >= SYSDATE - 90
-       AND NVL(tl.expectedreceiptdate, t.duedate) <= SYSDATE + 270
-       AND i.itemid IN (${inList(itemCodes)})
-     GROUP BY i.itemid, TO_CHAR(NVL(tl.expectedreceiptdate, t.duedate), 'YYYY-MM-DD')`
-  );
-  for (const r of rows) {
+
+  const [receipts, openPos] = await Promise.all([
+    // 1) Réceptions réelles récentes (semaines passées).
+    suiteql<{ itemcode: string; due: string | null; qty_pieces: number; per_carton: number | null }>(
+      `SELECT i.itemid AS itemcode,
+              TO_CHAR(t.trandate, 'YYYY-MM-DD') AS due,
+              SUM(tl.quantity) AS qty_pieces,
+              MAX(NVL(u.conversionrate, 1)) AS per_carton
+       FROM transaction t
+       JOIN transactionline tl ON tl.transaction = t.id
+       JOIN item i ON i.id = tl.item
+       LEFT JOIN unitstypeuom u
+         ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
+       WHERE t.type = 'ItemRcpt'
+         AND tl.mainline = 'F'
+         AND tl.quantity > 0
+         AND t.trandate >= SYSDATE - 120
+         AND i.itemid IN (${inList(itemCodes)})
+       GROUP BY i.itemid, TO_CHAR(t.trandate, 'YYYY-MM-DD')`
+    ),
+    // 2) Reliquats de PO attendus (semaines futures).
+    suiteql<{ itemcode: string; due: string | null; qty_pieces: number; per_carton: number | null }>(
+      `SELECT i.itemid AS itemcode,
+              TO_CHAR(NVL(tl.expectedreceiptdate, t.duedate), 'YYYY-MM-DD') AS due,
+              SUM(tl.quantity - NVL(tl.quantityshiprecv, 0)) AS qty_pieces,
+              MAX(NVL(u.conversionrate, 1)) AS per_carton
+       FROM transaction t
+       JOIN transactionline tl ON tl.transaction = t.id
+       JOIN item i ON i.id = tl.item
+       LEFT JOIN unitstypeuom u
+         ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
+       WHERE t.type = 'PurchOrd'
+         AND tl.mainline = 'F'
+         AND tl.quantity - NVL(tl.quantityshiprecv, 0) > 0
+         AND NVL(tl.expectedreceiptdate, t.duedate) >= SYSDATE
+         AND NVL(tl.expectedreceiptdate, t.duedate) <= SYSDATE + 270
+         AND i.itemid IN (${inList(itemCodes)})
+       GROUP BY i.itemid, TO_CHAR(NVL(tl.expectedreceiptdate, t.duedate), 'YYYY-MM-DD')`
+    ),
+  ]);
+
+  for (const r of [...receipts, ...openPos]) {
     if (!r.due) continue;
     const perCarton = Number(r.per_carton) || 1;
     const entry = { dueDate: r.due, qtyCartons: (Number(r.qty_pieces) || 0) / perCarton };
