@@ -1,0 +1,69 @@
+{
+  "POKAWA": {
+    "display_name": "Pokawa",
+    "brand_color": "#1B1F5E",
+    "accent_color": "#F6C9CE",
+    "background_color": "#EEF0FA",
+    "data_feb_file_pattern": "POKAWA_DATA",
+    "breakdown_sheet_name": "POKAWA",
+    "financial_column": "Pokawa",
+    "logo_text": "POKAWA",
+    "restaurant_name_matches": [
+      "POKAWA"
+    ],
+    "restaurant_name_aliases": [
+      "GUZMAN GASTRONOMIA"
+    ],
+    "corner_wasabi_count_manual": 2,
+    "netsuite_parent_id": 188607
+  },
+  "KROUSTY": {
+    "display_name": "Krousty",
+    "brand_color": "#7A1F1F",
+    "accent_color": "#F3D6B0",
+    "background_color": "#FBF1E6",
+    "data_feb_file_pattern": "KROUSTY_DATA",
+    "breakdown_sheet_name": "KROUSTY",
+    "financial_column": "Krousty",
+    "logo_text": "KROUSTY",
+    "restaurant_name_matches": [
+      "KROUSTY"
+    ],
+    "restaurant_name_aliases": [],
+    "corner_wasabi_count_manual": 0,
+    "netsuite_parent_id": 189320
+  },
+  "LUKS_KEBAB": {
+    "display_name": "L\u00fcks Kebab",
+    "brand_color": "#2B2B2B",
+    "accent_color": "#E4C9A0",
+    "background_color": "#F5F1EA",
+    "data_feb_file_pattern": "LUKS_KEBAB_DATA",
+    "breakdown_sheet_name": "LUKS KEBAB",
+    "financial_column": "L\u00fcks Kebab",
+    "logo_text": "L\u00dcKS KEBAB",
+    "restaurant_name_matches": [
+      "LUKS",
+      "L\u00dcKS"
+    ],
+    "restaurant_name_aliases": [],
+    "corner_wasabi_count_manual": 0,
+    "netsuite_parent_id": 189319
+  },
+  "KAZDALERIE": {
+    "display_name": "La Kazdalerie",
+    "brand_color": "#264D3B",
+    "accent_color": "#D8E4C8",
+    "background_color": "#EFF4E9",
+    "data_feb_file_pattern": "KAZDALERIE_DATA",
+    "breakdown_sheet_name": "KAZDALERIE",
+    "financial_column": "La Kazdalerie",
+    "logo_text": "LA KAZDALERIE",
+    "restaurant_name_matches": [
+      "KAZDALERIE"
+    ],
+    "restaurant_name_aliases": [],
+    "corner_wasabi_count_manual": 0,
+    "netsuite_parent_id": 189318
+  }
+}
