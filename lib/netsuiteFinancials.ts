@@ -49,7 +49,7 @@ function pctEnc(s: string): string {
   return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
-async function suiteql<T = Record<string, unknown>>(query: string): Promise<T[]> {
+export async function suiteql<T = Record<string, unknown>>(query: string): Promise<T[]> {
   const account = env("NETSUITE_ACCOUNT_ID");
   const consumerKey = env("NETSUITE_CONSUMER_KEY");
   const consumerSecret = env("NETSUITE_CONSUMER_SECRET");
