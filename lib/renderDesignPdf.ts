@@ -302,7 +302,13 @@ function pageArticles(c: Ctx) {
   c.page.drawCircle({ x: X(290), y: Y(200), size: 5, color: PINK });
   txt(c, "Consommation", 308, 188, { size: 22, font: c.f.med });
 
-  const arts = c.r.articles;
+  // Page 3 : uniquement les articles comparables (prévision ET consommation) —
+  // demande Nicolas 04/08/2026, inutile d'afficher toutes les références.
+  // Repli si aucun couple prévision/conso (ex. mois sans prévisionnel) : tout
+  // article ayant au moins une valeur, pour ne pas rendre une page vide.
+  const all = c.r.articles;
+  let arts = all.filter((a) => a.forecast > 0 && a.consumption > 0);
+  if (arts.length === 0) arts = all.filter((a) => a.forecast > 0 || a.consumption > 0);
   const chartTop = 240;
   const chartBottom = 1030;
   const axisX0 = 278;
