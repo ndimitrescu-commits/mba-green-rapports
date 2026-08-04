@@ -49,7 +49,44 @@ function pctEnc(s: string): string {
   return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+// ---------------------------------------------------------------------------
+// Garde-fou de concurrence : l'integration record NetSuite est plafonné à
+// 4 requêtes simultanées (Setup > Integration > Integration Governance).
+// La génération d'un rapport lance ~10 requêtes SuiteQL en parallèle
+// (financier, conso, prix, stock, transit, commission...) → 429 sans limite.
+// On sérialise à MAX_CONCURRENT (marge sous le plafond), avec file d'attente,
+// et on retente avec backoff si un 429 passe quand même.
+// ---------------------------------------------------------------------------
+const MAX_CONCURRENT = 3;
+let activeRequests = 0;
+const requestQueue: (() => void)[] = [];
+
+function acquireSlot(): Promise<void> {
+  if (activeRequests < MAX_CONCURRENT) {
+    activeRequests++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => requestQueue.push(resolve));
+}
+
+function releaseSlot(): void {
+  const next = requestQueue.shift();
+  if (next) next(); // le slot passe directement au suivant
+  else activeRequests--;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function suiteql<T = Record<string, unknown>>(query: string): Promise<T[]> {
+  await acquireSlot();
+  try {
+    return await suiteqlInner<T>(query);
+  } finally {
+    releaseSlot();
+  }
+}
+
+async function suiteqlInner<T = Record<string, unknown>>(query: string): Promise<T[]> {
   const account = env("NETSUITE_ACCOUNT_ID");
   const consumerKey = env("NETSUITE_CONSUMER_KEY");
   const consumerSecret = env("NETSUITE_CONSUMER_SECRET");
@@ -62,41 +99,49 @@ export async function suiteql<T = Record<string, unknown>>(query: string): Promi
   let url: string | null = `https://${host}/services/rest/query/v1/suiteql?limit=1000`;
 
   while (url) {
-    const oauth: Record<string, string> = {
-      oauth_consumer_key: consumerKey,
-      oauth_nonce: crypto.randomBytes(16).toString("hex"),
-      oauth_signature_method: "HMAC-SHA256",
-      oauth_timestamp: String(Math.floor(Date.now() / 1000)),
-      oauth_token: tokenId,
-      oauth_version: "1.0",
-    };
-    // Base string : méthode + URL sans query + params (query + oauth) triés
-    const u = new URL(url);
-    const params: [string, string][] = [...u.searchParams.entries(), ...Object.entries(oauth)];
-    const paramStr = params
-      .map(([k, v]) => [pctEnc(k), pctEnc(v)] as [string, string])
-      .sort((a, b) => (a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])))
-      .map(([k, v]) => `${k}=${v}`)
-      .join("&");
-    const base = `POST&${pctEnc(`${u.origin}${u.pathname}`)}&${pctEnc(paramStr)}`;
-    const signKey = `${pctEnc(consumerSecret)}&${pctEnc(tokenSecret)}`;
-    const signature = crypto.createHmac("sha256", signKey).update(base).digest("base64");
+    let res: Response | null = null;
+    const maxTries = 4;
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+      // La signature est reconstruite à chaque tentative (nonce/timestamp frais).
+      const oauth: Record<string, string> = {
+        oauth_consumer_key: consumerKey,
+        oauth_nonce: crypto.randomBytes(16).toString("hex"),
+        oauth_signature_method: "HMAC-SHA256",
+        oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+        oauth_token: tokenId,
+        oauth_version: "1.0",
+      };
+      // Base string : méthode + URL sans query + params (query + oauth) triés
+      const u = new URL(url);
+      const params: [string, string][] = [...u.searchParams.entries(), ...Object.entries(oauth)];
+      const paramStr = params
+        .map(([k, v]) => [pctEnc(k), pctEnc(v)] as [string, string])
+        .sort((a, b) => (a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&");
+      const base = `POST&${pctEnc(`${u.origin}${u.pathname}`)}&${pctEnc(paramStr)}`;
+      const signKey = `${pctEnc(consumerSecret)}&${pctEnc(tokenSecret)}`;
+      const signature = crypto.createHmac("sha256", signKey).update(base).digest("base64");
 
-    const authHeader =
-      `OAuth realm="${realm}", ` +
-      Object.entries({ ...oauth, oauth_signature: signature })
-        .map(([k, v]) => `${k}="${pctEnc(v)}"`)
-        .join(", ");
+      const authHeader =
+        `OAuth realm="${realm}", ` +
+        Object.entries({ ...oauth, oauth_signature: signature })
+          .map(([k, v]) => `${k}="${pctEnc(v)}"`)
+          .join(", ");
 
-    const res: Response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-        Prefer: "transient",
-      },
-      body: JSON.stringify({ q: query }),
-    });
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+          Prefer: "transient",
+        },
+        body: JSON.stringify({ q: query }),
+      });
+      if (res.status !== 429) break;
+      if (attempt < maxTries) await sleep(400 * attempt + Math.floor(Math.random() * 250));
+    }
+    if (!res) throw new Error("NetSuite SuiteQL : aucune réponse");
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`NetSuite SuiteQL ${res.status}: ${body.slice(0, 300)}`);
