@@ -13,6 +13,46 @@
 import { useEffect, useRef, useState } from "react";
 import clientsConfig from "@/lib/clients.json";
 
+/**
+ * Rendu du PDF en canvas via pdf.js — indépendant des réglages du navigateur
+ * (le viewer natif est désactivé quand Chrome est configuré pour télécharger
+ * les PDF au lieu de les ouvrir, ce qui affichait un simple bouton "Open").
+ */
+async function drawPdfInto(container: HTMLDivElement, data: ArrayBuffer) {
+  const pdfjs: any = await import("pdfjs-dist");
+  try {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url
+    ).toString();
+  } catch {
+    // pas de worker bundlé -> pdf.js bascule sur le "fake worker" (thread principal)
+  }
+  const doc = await pdfjs.getDocument({ data }).promise;
+  container.innerHTML = "";
+  const width = Math.max(container.clientWidth - 24, 320);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const base = page.getViewport({ scale: 1 });
+    const scale = width / base.width;
+    const viewport = page.getViewport({ scale: scale * dpr });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${viewport.height / dpr}px`;
+    canvas.style.borderRadius = "10px";
+    canvas.style.boxShadow = "0 2px 10px rgba(31,42,107,0.12)";
+    canvas.style.background = "#fff";
+    canvas.style.display = "block";
+    canvas.style.margin = "0 auto 14px";
+    container.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  }
+  doc.destroy();
+}
+
 type ClientsConfig = Record<string, { display_name: string }>;
 const CLIENTS = clientsConfig as ClientsConfig;
 const MONTHS = [
@@ -162,9 +202,21 @@ export default function PreviewPage() {
   const [rendering, setRendering] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
+  const viewerRef = useRef<HTMLDivElement | null>(null);
+  const drawToken = useRef(0);
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const monthLabel = `${monthName} ${year}`;
+
+  // Dessine le PDF (pdf.js) à chaque nouvel aperçu reçu.
+  useEffect(() => {
+    if (!pdfData || !viewerRef.current) return;
+    const token = ++drawToken.current;
+    const el = viewerRef.current;
+    drawPdfInto(el, pdfData.slice(0)).catch((e) => {
+      if (drawToken.current === token) setError(`Affichage de l'aperçu impossible : ${e?.message ?? e}`);
+    });
+  }, [pdfData]);
 
   async function loadData() {
     setLoading(true);
@@ -201,12 +253,7 @@ export default function PreviewPage() {
         const d = await res.json().catch(() => null);
         throw new Error(d?.error || "Erreur pendant le rendu de l'aperçu.");
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setPdfUrl((old) => {
-        if (old) URL.revokeObjectURL(old);
-        return url;
-      });
+      setPdfData(await res.arrayBuffer());
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -348,12 +395,11 @@ export default function PreviewPage() {
               </details>
             ))}
         </div>
-        <div style={{ flex: 1, padding: "14px 14px 14px 0" }}>
-          {pdfUrl ? (
-            <iframe
-              src={`${pdfUrl}#view=FitH`}
-              title="Aperçu du rapport"
-              style={{ width: "100%", height: "100%", borderRadius: 12, border: "1px solid #dde1f1", background: "#fff" }}
+        <div style={{ flex: 1, padding: "14px 14px 14px 0", minWidth: 0 }}>
+          {pdfData ? (
+            <div
+              ref={viewerRef}
+              style={{ height: "100%", overflowY: "auto", background: "#e2e6f5", borderRadius: 12, padding: 12 }}
             />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa0ba", fontSize: 15, background: "#e9ecfb", borderRadius: 12 }}>

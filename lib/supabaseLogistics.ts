@@ -132,13 +132,29 @@ export interface GeodisRow {
   outcome: string | null;
   poids: number | null;
   nb_colis: number | null;
+  /** Référence expéditeur GEODIS, ex. "SO48234 - 7 COLIS" — porte le nombre
+   * de cartons pour les envois palettisés où nb_colis vaut 0. */
+  reference1?: string | null;
   date_depart: string | null;
   date_livraison_prevue: string | null;
   date_livraison_reelle: string | null;
 }
 
 const GEODIS_COLS =
-  "nom_dest,client_nom,type_prestation,code_produit,code_pays_dest,outcome,poids,nb_colis,date_depart,date_livraison_prevue,date_livraison_reelle";
+  "nom_dest,client_nom,type_prestation,code_produit,code_pays_dest,outcome,poids,nb_colis,reference1,date_depart,date_livraison_prevue,date_livraison_reelle";
+
+/**
+ * Cartons d'une expédition GEODIS : nb_colis quand il est renseigné, sinon le
+ * nombre porté par la référence "SOxxxxx - N COLIS" (les envois palettisés de
+ * 2026 ont nb_colis = 0 mais la référence est fiable — validé juillet 2026 :
+ * 350/351 lignes, 4 312 cartons, cohérent avec les 4 535 de février).
+ */
+function geodisCartons(r: GeodisRow): number {
+  const direct = toNum(r.nb_colis);
+  if (direct > 0) return direct;
+  const m = /(\d+)\s*COLIS/i.exec(String(r.reference1 ?? ""));
+  return m ? Number(m[1]) : 0;
+}
 
 async function fetchAll<T>(query: () => any): Promise<T[]> {
   const rows: T[] = [];
@@ -222,7 +238,7 @@ export async function fetchGeodisFromSupabase(
 export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResult {
   const holidays = frenchHolidays(year);
   const names = new Set(rows.map((r) => up(r.nom_dest).trim()).filter(Boolean));
-  const totalCartons = rows.reduce((s, r) => s + toNum(r.nb_colis), 0);
+  const totalCartons = rows.reduce((s, r) => s + geodisCartons(r), 0);
   const totalPoids = round(rows.reduce((s, r) => s + toNum(r.poids), 0));
   const livrees = rows.filter((r) => r.outcome === "livre").length;
   const decided = rows.filter((r) => r.outcome !== null).length;
