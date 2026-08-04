@@ -350,7 +350,11 @@ export default function PreviewPage() {
         </div>
         <div style={{ flex: 1, padding: "14px 14px 14px 0" }}>
           {pdfUrl ? (
-            <embed src={pdfUrl} type="application/pdf" style={{ width: "100%", height: "100%", borderRadius: 12, border: "1px solid #dde1f1" }} />
+            <iframe
+              src={`${pdfUrl}#view=FitH`}
+              title="Aperçu du rapport"
+              style={{ width: "100%", height: "100%", borderRadius: 12, border: "1px solid #dde1f1", background: "#fff" }}
+            />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa0ba", fontSize: 15, background: "#e9ecfb", borderRadius: 12 }}>
               {loading ? "Collecte des données en cours…" : ctx ? "Rendu de l'aperçu…" : "L'aperçu PDF s'affichera ici"}
