@@ -12,7 +12,12 @@
  */
 import clientsConfig from "./clients.json";
 import * as parsers from "./parsers";
-import { fetchConsumptionCartons, fetchStockOnHand, fetchTransitByItem } from "./netsuiteData";
+import {
+  fetchAvgPriceByCarton,
+  fetchConsumptionCartons,
+  fetchStockOnHand,
+  fetchTransitByItem,
+} from "./netsuiteData";
 import { fetchFinancials, fetchReferencingCommission } from "./netsuiteFinancials";
 import { readForecast, readPrices, readCommissions, type ForecastRow } from "./googleSheets";
 import type {
@@ -134,9 +139,14 @@ async function buildArticles(
   month: ParsedMonth,
   forecastRows: ForecastRow[]
 ): Promise<ArticlesResult> {
-  const [consumption, prices] = await Promise.all([
+  // Prix unitaire carton : onglet "Prix" du Prévisionnel prioritaire, repli
+  // sur le prix moyen réalisé du mois (factures NetSuite) — ainsi le
+  // "CA attendu" (= prévisions × prix unitaire) est calculable même tant que
+  // la table de prix n'est pas remplie.
+  const [consumption, prices, avgPrices] = await Promise.all([
     fetchConsumptionCartons(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
     readPrices(clientKey),
+    fetchAvgPriceByCarton(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
   ]);
 
   const forecastMap = new Map<string, number>();
@@ -161,7 +171,7 @@ async function buildArticles(
     const forecastCartons = forecastMap.get(code) ?? 0;
     const cons = consumptionMap.get(code);
     const consCartons = cons?.qty ?? 0;
-    const price = prices.get(code) ?? 0;
+    const price = prices.get(code) ?? avgPrices.get(code) ?? 0;
     const rate = forecastCartons ? Math.round((consCartons / forecastCartons) * 100) : null;
 
     items.push({

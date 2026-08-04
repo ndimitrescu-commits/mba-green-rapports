@@ -151,8 +151,8 @@ function newPage(c: Ctx, bg: any = WHITE) {
   c.page.drawRectangle({ x: 0, y: 0, width: PAGE_W, height: PAGE_H, color: bg });
 }
 
-function pageNumber(c: Ctx, n: number) {
-  txt(c, String(n).padStart(2, "0"), 1870, 40, {
+function pageNumber(c: Ctx, n: number, yTop = 40) {
+  txt(c, String(n).padStart(2, "0"), 1870, yTop, {
     size: 30,
     font: c.f.semi,
     align: "right",
@@ -397,17 +397,19 @@ function pageArticles(c: Ctx) {
 
 function pageStock(c: Ctx) {
   newPage(c);
-  pageNumber(c, 4);
-  txt(c, "Articles", 55, 55, { size: 54, font: c.f.xbold });
-  txt(c, "Statut :", 55, 122, { size: 54, font: c.f.xbold });
+  pageNumber(c, 4, 18);
+  txt(c, "Articles", 55, 48, { size: 46, font: c.f.xbold });
+  txt(c, "Statut :", 55, 104, { size: 46, font: c.f.xbold });
 
   const items = c.r.stock_status.slice(0, 6);
   const weeks = items[0]?.weeks?.map((w) => w.week) ?? [];
   const nW = Math.min(weeks.length, 8);
 
-  rrect(c, 258, 62, 262, 44, 22, NAVY);
-  txt(c, "PRÉVISIONS / STOCK / EN TRANSIT", 389, 79, {
-    size: 11,
+  // Pill décalé après le titre (le titre "Articles" s'étend jusqu'à ~295)
+  // et rétréci pour ne pas mordre la première colonne SEMAINE (x=560).
+  rrect(c, 330, 62, 216, 44, 22, NAVY);
+  txt(c, "PRÉVISIONS / STOCK / EN TRANSIT", 438, 80, {
+    size: 10,
     font: c.f.semi,
     align: "center",
     color: WHITE,
@@ -433,8 +435,8 @@ function pageStock(c: Ctx) {
     { key: "in_transit" as const, label: "EN TRANSIT", pill: PINK_PILL },
   ];
 
-  const blockTop = 128;
-  const blockH = 148;
+  const blockTop = 150;
+  const blockH = 142;
   items.forEach((item, bi) => {
     const yB = blockTop + bi * blockH;
     rrect(c, 190, yB + 8, 260, 128, 18, NAVY);
@@ -500,7 +502,9 @@ function perfPanel(
 ) {
   rrect(c, x, 288, 882, 742, 26, LAVENDER_PANEL);
   txt(c, title, x + 42, 322, { size: 30, font: c.f.med });
-  const cy = 432;
+  // Cercle descendu sous le sous-titre (avant : sommet du cercle à ~340,
+  // en collision avec la ligne de titre 322-352).
+  const cy = 470;
   c.page.drawCircle({ x: X(x + 105), y: Y(cy), size: 46, color: NAVY });
   txt(c, rate === null || rate === undefined ? "-" : `${nf(rate)}%`, x + 105, cy - 16, {
     size: 26,
@@ -508,7 +512,7 @@ function perfPanel(
     align: "center",
     color: WHITE,
   });
-  let ry = 390;
+  let ry = 426;
   const labelW = Math.max(
     ...rows.map((rr) => c.f.reg.widthOfTextAtSize(rr.label, 24 * S)),
     0
@@ -519,12 +523,12 @@ function perfPanel(
     ry += 36;
   }
   if (chart) {
-    txt(c, chart.title, x + 441, 512, { size: 26, font: c.f.med, align: "center" });
+    txt(c, chart.title, x + 441, 556, { size: 26, font: c.f.med, align: "center" });
     if (chart.bars.length > 0) {
       const maxV = Math.max(1, ...chart.bars.flatMap((b) => [b.navy, b.pink]));
       const bx0 = x + 132;
       const bw = 655;
-      let by = 558;
+      let by = 602;
       for (const b of chart.bars) {
         txt(c, b.label, bx0 - 12, by + 4, { size: 15, color: GREY_TEXT, align: "right" });
         if (b.navy > 0) rrect(c, bx0, by, Math.max((b.navy / maxV) * bw, 6), 13, 6.5, NAVY);
@@ -537,7 +541,7 @@ function perfPanel(
       c.page.drawCircle({ x: X(x + 462), y: Y(ly + 12), size: 5, color: PINK });
       txt(c, "Prévu", x + 478, ly, { size: 18, font: c.f.med });
     } else {
-      const ly = 560;
+      const ly = 604;
       c.page.drawCircle({ x: X(x + 322), y: Y(ly + 12), size: 5, color: NAVY });
       txt(c, "Livrée", x + 338, ly, { size: 18, font: c.f.med });
       c.page.drawCircle({ x: X(x + 462), y: Y(ly + 12), size: 5, color: PINK });

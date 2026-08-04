@@ -65,6 +65,52 @@ export async function fetchConsumptionCartons(
   });
 }
 
+/**
+ * Prix unitaire carton moyen réalisé (€ HT / carton) par article sur la
+ * période, d'après les factures. Sert de repli quand l'onglet "Prix" du
+ * Prévisionnel n'a pas de ligne pour l'article : le "CA attendu" (prévisions
+ * × prix unitaire) reste alors calculable avec le prix effectivement facturé.
+ */
+export async function fetchAvgPriceByCarton(
+  parentId: number,
+  dateFrom: string,
+  dateTo: string
+): Promise<Map<string, number>> {
+  const toExcl = nextDay(dateTo);
+  const rows = await suiteql<{
+    itemcode: string;
+    total_ht: number;
+    qty_pieces: number;
+    per_carton: number | null;
+  }>(
+    `SELECT i.itemid AS itemcode,
+            SUM(-tl.foreignamount) AS total_ht,
+            SUM(-tl.quantity) AS qty_pieces,
+            MAX(NVL(u.conversionrate, 1)) AS per_carton
+     FROM transaction t
+     JOIN transactionline tl ON tl.transaction = t.id
+     JOIN item i ON i.id = tl.item
+     LEFT JOIN unitstypeuom u
+       ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
+     WHERE t.type = 'CustInvc'
+       AND tl.mainline = 'F' AND tl.taxline = 'F'
+       AND tl.itemtype = 'InvtPart'
+       AND t.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+       AND t.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+       AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
+     GROUP BY i.itemid`
+  );
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const pieces = Number(r.qty_pieces) || 0;
+    const perCarton = Number(r.per_carton) || 1;
+    const cartons = pieces / perCarton;
+    const ht = Number(r.total_ht) || 0;
+    if (cartons > 0 && ht > 0) out.set(String(r.itemcode), Math.round((ht / cartons) * 100) / 100);
+  }
+  return out;
+}
+
 /** Stock disponible (cartons) par code article, toutes localisations. */
 export async function fetchStockOnHand(itemCodes: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
