@@ -537,29 +537,32 @@ function perfPanel(
     ry += 36;
   }
   if (chart) {
-    txt(c, chart.title, x + 441, 556, { size: 26, font: c.f.med, align: "center" });
+    // Calé sur le gabarit des équipes (04/08/2026) : graphique plus bas et
+    // centré dans le cadre, barres plus courtes et plus épaisses.
+    txt(c, chart.title, x + 441, 654, { size: 26, font: c.f.med, align: "center" });
     if (chart.bars.length > 0) {
       const maxV = Math.max(1, ...chart.bars.flatMap((b) => [b.navy, b.pink]));
-      const bx0 = x + 132;
-      const bw = 655;
-      let by = 602;
+      const bx0 = x + 268;
+      const bw = 430;
+      const barH = 26;
+      let by = 712;
       for (const b of chart.bars) {
-        txt(c, b.label, bx0 - 12, by + 4, { size: 15, color: GREY_TEXT, align: "right" });
-        if (b.navy > 0) rrect(c, bx0, by, Math.max((b.navy / maxV) * bw, 6), 13, 6.5, NAVY);
-        if (b.pink > 0) rrect(c, bx0, by + 17, Math.max((b.pink / maxV) * bw, 6), 13, 6.5, PINK);
-        by += 46;
+        txt(c, b.label, bx0 - 14, by + 6, { size: 15, color: GREY_TEXT, align: "right" });
+        if (b.navy > 0) rrect(c, bx0, by, Math.max((b.navy / maxV) * bw, 10), barH, 5, NAVY);
+        if (b.pink > 0) rrect(c, bx0, by + barH + 4, Math.max((b.pink / maxV) * bw, 10), barH, 5, PINK);
+        by += b.pink > 0 ? 84 : 52;
       }
-      const ly = by + 12;
-      c.page.drawCircle({ x: X(x + 322), y: Y(ly + 12), size: 5, color: NAVY });
-      txt(c, "Livrée", x + 338, ly, { size: 18, font: c.f.med });
-      c.page.drawCircle({ x: X(x + 462), y: Y(ly + 12), size: 5, color: PINK });
-      txt(c, "Prévu", x + 478, ly, { size: 18, font: c.f.med });
+      const ly = by + 14;
+      c.page.drawCircle({ x: X(x + 330), y: Y(ly + 12), size: 7, color: NAVY });
+      txt(c, "Livrée", x + 350, ly, { size: 20, font: c.f.med });
+      c.page.drawCircle({ x: X(x + 490), y: Y(ly + 12), size: 7, color: PINK });
+      txt(c, "Prévu", x + 510, ly, { size: 20, font: c.f.med });
     } else {
-      const ly = 604;
-      c.page.drawCircle({ x: X(x + 322), y: Y(ly + 12), size: 5, color: NAVY });
-      txt(c, "Livrée", x + 338, ly, { size: 18, font: c.f.med });
-      c.page.drawCircle({ x: X(x + 462), y: Y(ly + 12), size: 5, color: PINK });
-      txt(c, "Prévu", x + 478, ly, { size: 18, font: c.f.med });
+      const ly = 712;
+      c.page.drawCircle({ x: X(x + 330), y: Y(ly + 12), size: 7, color: NAVY });
+      txt(c, "Livrée", x + 350, ly, { size: 20, font: c.f.med });
+      c.page.drawCircle({ x: X(x + 490), y: Y(ly + 12), size: 7, color: PINK });
+      txt(c, "Prévu", x + 510, ly, { size: 20, font: c.f.med });
     }
   }
 }
