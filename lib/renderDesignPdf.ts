@@ -277,7 +277,15 @@ function pageKpi(c: Ctx) {
     y0 = 320;
   card(c, x0, y0, cw, ch, "articles", "Articles", [
     { text: `SKU : ${nf(k.sku_count)}`, big: true },
-    { text: `Pièces : ${nf(k.pieces_consumed)}`, big: true },
+    // En cartons (unité métier MBA Green) — les pièces restent dans le
+    // contexte mais ne sont plus affichées (demande Nicolas 04/08/2026).
+    {
+      text:
+        k.cartons_consumed !== undefined && k.cartons_consumed !== null
+          ? `Cartons : ${nf(k.cartons_consumed)}`
+          : `Pièces : ${nf(k.pieces_consumed)}`,
+      big: true,
+    },
   ]);
   card(c, x0 + (cw + gap), y0, cw, ch, "ca", "Chiffre d'affaires", [
     { text: eur(k.ca_actual), big: true },

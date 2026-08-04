@@ -63,7 +63,8 @@ const MONTHS = [
 // Libellés français des champs connus (repli : nom brut de la clé).
 const LABELS: Record<string, string> = {
   kpi: "Facteurs clés (p.2-3)",
-  sku_count: "SKU", pieces_consumed: "Pièces", ca_actual: "CA réalisé (€ HT)",
+  sku_count: "SKU", pieces_consumed: "Pièces (non affiché)", cartons_consumed: "Cartons facturés",
+  ca_actual: "CA réalisé (€ HT)",
   ca_forecast: "CA attendu (€ HT)", performance_rate: "Taux de performance (%)",
   total_commandes: "Total commandes", total_cartons: "Total cartons",
   taux_reussite: "Taux de réussite (%)",

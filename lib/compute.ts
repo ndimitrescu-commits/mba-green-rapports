@@ -412,6 +412,7 @@ export async function buildReportContext(
       // mapping, but the number/unit shown on page 1 changes as a result.
       // Flagged explicitly to Nicolas, not a silent change.
       pieces_consumed: Math.trunc(articles.total_cartons_consumed),
+      cartons_consumed: Math.round(articles.total_cartons_consumed),
       ca_actual: Number(caActual),
       ca_forecast: articles.ca_forecast,
       performance_rate: performanceRate,
@@ -534,6 +535,7 @@ export async function buildReportContextWithLogistics(
     kpi: {
       sku_count: articles.sku_count,
       pieces_consumed: articles.total_pieces_consumed,
+      cartons_consumed: Math.round(articles.total_cartons_consumed),
       ca_actual: caActual,
       ca_forecast: articles.ca_forecast,
       performance_rate: performanceRate,

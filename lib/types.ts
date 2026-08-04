@@ -168,6 +168,8 @@ export interface ReportContext {
   kpi: {
     sku_count: number;
     pieces_consumed: number;
+    /** Cartons facturés du mois (somme des consommations articles). */
+    cartons_consumed?: number | null;
     ca_actual: number;
     ca_forecast: number;
     performance_rate: number | null;
