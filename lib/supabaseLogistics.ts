@@ -13,7 +13,14 @@
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type { ClientConfig, CountryStats, DelayBuckets, GeodisResult, GlsResult } from "./types";
+import type {
+  ClientConfig,
+  CountryStats,
+  DelayBuckets,
+  GeodisResult,
+  GlsResult,
+  GlsZoneStats,
+} from "./types";
 
 function getSupabase(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -327,6 +334,10 @@ export interface GlsRow {
   pays: string | null;
   poids: number | null;
   date_depart: string | null;
+  /** "livre" | "en_cours" | "probleme_gls" | ... (colonne statut de gls_parcels). */
+  statut?: string | null;
+  date_livraison_prevue?: string | null;
+  date_livraison_reelle?: string | null;
 }
 
 export async function fetchGlsFromSupabase(
@@ -339,12 +350,59 @@ export async function fetchGlsFromSupabase(
   const all = await fetchAll<GlsRow>(() =>
     sb
       .from("gls_parcels")
-      .select("nom_dest,numero_so,ref_colis,pays,poids,date_depart")
+      .select(
+        "nom_dest,numero_so,ref_colis,pays,poids,date_depart,statut,date_livraison_prevue,date_livraison_reelle"
+      )
       .gte("date_depart", dateFrom)
       .lt("date_depart", dateTo)
   );
   const rows = all.filter((r) => matchesClient({ nom_dest: r.nom_dest }, patterns));
   return computeGlsResult(rows, new Date(dateFrom).getUTCFullYear());
+}
+
+/**
+ * Stats "Respect délais jour" d'une zone GLS. Délais en JOURS OUVRÉS entre la
+ * date de départ et la livraison (réelle pour les barres "Livrée", prévue pour
+ * les barres "Prévu"), fériés français exclus — même convention que GEODIS.
+ * `bucketMaxDays` = bornes hautes des paliers (France [1,2] → 24H/48H/>48H,
+ * Europe [2,3] → 48H/72H/>72H) ; au-delà de la dernière borne, dernier palier.
+ */
+function glsZoneStats(
+  rows: GlsRow[],
+  holidays: Set<string>,
+  bucketMaxDays: number[],
+  labels: string[]
+): GlsZoneStats | null {
+  if (rows.length === 0) return null;
+  const livres = rows.filter((r) => r.statut === "livre");
+  const decides = rows.filter((r) => r.statut && r.statut !== "en_cours").length;
+
+  const bucketOf = (from: string | null | undefined, to: string | null | undefined): number | null => {
+    const f = parisParts(from ?? null);
+    const t = parisParts(to ?? null);
+    if (!f || !t) return null;
+    const d = businessDaysBetween(f.date, t.date, holidays);
+    for (let i = 0; i < bucketMaxDays.length; i++) if (d <= bucketMaxDays[i]) return i;
+    return bucketMaxDays.length;
+  };
+
+  const buckets = labels.map((label) => ({ label, livre: 0, prevu: 0 }));
+  const last = buckets.length - 1;
+  for (const r of rows) {
+    if (r.statut === "livre") {
+      const b = bucketOf(r.date_depart, r.date_livraison_reelle);
+      if (b !== null) buckets[Math.min(b, last)].livre++;
+    }
+    const p = bucketOf(r.date_depart, r.date_livraison_prevue);
+    if (p !== null) buckets[Math.min(p, last)].prevu++;
+  }
+
+  return {
+    total: rows.length,
+    livrees: livres.length,
+    rate: decides > 0 ? round((livres.length / decides) * 100, 0) : null,
+    buckets,
+  };
 }
 
 /** Calcul pur (testable) sur des lignes déjà filtrées pour le client. */
@@ -368,6 +426,13 @@ export function computeGlsResult(rows: GlsRow[], year: number): GlsResult {
       .map((p) => p.date)
   );
 
+  // Zones page 10 : France (FR ou pays inconnu) vs Europe (reste).
+  const frRows = rows.filter((r) => {
+    const p = up(r.pays).trim();
+    return !p || p === "FR" || p === "?";
+  });
+  const euRows = rows.filter((r) => !frRows.includes(r));
+
   const nCmds = commandes.size;
   return {
     restaurant_names: names,
@@ -380,5 +445,7 @@ export function computeGlsResult(rows: GlsRow[], year: number): GlsResult {
     moyenne_cmds_cartons: nCmds > 0 ? round(rows.length / nCmds, 2) : null,
     moyenne_cmds_poids: nCmds > 0 ? round(totalPoids / nCmds, 2) : null,
     corner_wasabi_count: [...names].filter((n) => n.includes("WASABI")).length,
+    fr: glsZoneStats(frRows, holidays, [1, 2], ["24H", "48H", ">48H"]),
+    europe: glsZoneStats(euRows, holidays, [2, 3], ["48H", "72H", ">72H"]),
   };
 }

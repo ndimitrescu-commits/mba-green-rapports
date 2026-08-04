@@ -135,6 +135,23 @@ export interface GlsResult {
   moyenne_cmds_cartons: number | null;
   moyenne_cmds_poids: number | null;
   corner_wasabi_count: number;
+  /** Stats de livraison par zone (page 10) — calculées depuis les colonnes
+   * statut / date_livraison_prevue / date_livraison_reelle de gls_parcels.
+   * Optionnelles : absentes si la source ne les fournit pas. */
+  fr?: GlsZoneStats | null;
+  europe?: GlsZoneStats | null;
+}
+
+/** Stats "Respect délais jour" d'une zone GLS (France ou Europe). */
+export interface GlsZoneStats {
+  total: number;
+  livrees: number;
+  /** % livrés parmi les colis au statut décidé (livré / problème) ;
+   * les colis encore en cours ne comptent pas au dénominateur. */
+  rate: number | null;
+  /** Barres du graphique : nb de colis livrés (réel) vs prévus par palier
+   * de délai en jours ouvrés (France 24H/48H/>48H, Europe 48H/72H/>72H). */
+  buckets: { label: string; livre: number; prevu: number }[];
 }
 
 export type FinancialsResult = Record<string, unknown>;

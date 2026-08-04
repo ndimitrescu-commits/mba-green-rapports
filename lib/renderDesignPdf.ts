@@ -923,24 +923,32 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
   const glsFr = gl.by_country?.["FR"];
   const glsBe = gl.by_country?.["BE"] ?? 0;
   const glsLu = gl.by_country?.["LU"] ?? 0;
+  const frS = gl.fr ?? null;
+  const euS = gl.europe ?? null;
+  const zoneBars = (z: { buckets: { label: string; livre: number; prevu: number }[] } | null) =>
+    z ? z.buckets.map((b) => ({ label: b.label, navy: b.livre, pink: b.prevu })) : [];
   perfPanel(
     c,
     58,
     "France :",
-    null,
-    [{ label: "Total colis :", value: glsFr === undefined ? "-" : nf(glsFr) }],
-    { title: "Respect délais jour", bars: [] }
+    frS?.rate ?? null,
+    [
+      { label: "Total colis :", value: frS ? nf(frS.total) : glsFr === undefined ? "-" : nf(glsFr) },
+      ...(frS ? [{ label: "Livrées :", value: nf(frS.livrees) }] : []),
+    ],
+    { title: "Respect délais jour", bars: zoneBars(frS) }
   );
   perfPanel(
     c,
     980,
     "Europe :",
-    null,
+    euS?.rate ?? null,
     [
-      { label: "Total colis :", value: nf(glsBe + glsLu) },
+      { label: "Total colis :", value: euS ? nf(euS.total) : nf(glsBe + glsLu) },
+      ...(euS ? [{ label: "Livrées :", value: nf(euS.livrees) }] : []),
       { label: "Répartition BE / LU :", value: `${nf(glsBe)} / ${nf(glsLu)}` },
     ],
-    { title: "Respect délais jour", bars: [] }
+    { title: "Respect délais jour", bars: zoneBars(euS) }
   );
   pageFinancials(c);
   pageClosing(c);
