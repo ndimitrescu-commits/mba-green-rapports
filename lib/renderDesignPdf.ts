@@ -16,10 +16,14 @@ import fontkit from "@pdf-lib/fontkit";
 import type { ReportData } from "./reportData";
 import type { ReportContext } from "./types";
 import { CLIENT_ASSETS, FONTS, ICONS, IMAGES } from "./reportAssets";
+import { COMPACT_ASSETS, COMPACT_ICONS } from "./reportAssetsCompact";
 
 // ---------------------------------------------------------------------------
 // Palette (échantillonnée sur le rapport de référence)
 // ---------------------------------------------------------------------------
+const hx = (h: string) =>
+  rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+
 const NAVY = rgb(0x1f / 255, 0x2a / 255, 0x6b / 255);
 const LAVENDER_BG = rgb(0xed / 255, 0xef / 255, 0xfa / 255);
 const LAVENDER_PANEL = rgb(0xe9 / 255, 0xec / 255, 0xfb / 255);
@@ -33,6 +37,99 @@ const CIRCLE_2 = rgb(0xb9 / 255, 0xbd / 255, 0xd3 / 255);
 const CIRCLE_3 = rgb(0x9b / 255, 0xa0 / 255, 0xbe / 255);
 const GREY_TEXT = rgb(0.42, 0.44, 0.52);
 const GRID_LINE = rgb(0.9, 0.91, 0.95);
+
+/**
+ * Palette par enseigne. Le gabarit "full" (Pokawa) garde ses constantes
+ * historiques ; le gabarit "compact" est piloté par ces rôles, échantillonnés
+ * sur les rapports de référence Krousty / Black & White (juin 2026).
+ */
+interface Pal {
+  ink: ReturnType<typeof rgb>; // texte principal (titres, libellés)
+  panel: ReturnType<typeof rgb>; // grands panneaux sombres
+  barPrev: ReturnType<typeof rgb>; // barres "Prévisions" (page articles)
+  barConso: ReturnType<typeof rgb>; // barres "Consommation"
+  pill: ReturnType<typeof rgb>; // pastilles % (page articles)
+  pillText: ReturnType<typeof rgb>;
+  circle1: ReturnType<typeof rgb>; // CA attendu
+  circle2: ReturnType<typeof rgb>; // CA actuel
+  circle3: ReturnType<typeof rgb>; // Taux de performance
+  circleText: ReturnType<typeof rgb>;
+  coverBg: ReturnType<typeof rgb>;
+  coverTitle: ReturnType<typeof rgb>;
+  coverText: ReturnType<typeof rgb>; // mois / année sur la couverture
+  cream: ReturnType<typeof rgb>; // panneau "Horaires livraisons"
+  grey: ReturnType<typeof rgb>; // panneau "Logistique : Performance"
+  perfCircle: ReturnType<typeof rgb>; // cercles de la page performance
+  closingText: ReturnType<typeof rgb>; // "RAPPORT MENSUEL" de la page de fin
+  perfLivre: ReturnType<typeof rgb>; // barre "Livré"
+  perfPrevu: ReturnType<typeof rgb>; // barre "Prévu"
+}
+
+const PAL_DEFAULT: Pal = {
+  ink: NAVY,
+  panel: LAVENDER_PANEL,
+  barPrev: NAVY,
+  barConso: PINK,
+  pill: PINK,
+  pillText: NAVY,
+  circle1: CIRCLE_1,
+  circle2: CIRCLE_2,
+  circle3: CIRCLE_3,
+  circleText: NAVY,
+  coverBg: LAVENDER_BG,
+  coverTitle: NAVY,
+  coverText: NAVY,
+  cream: hx("#F1E9D6"),
+  grey: hx("#D9D9D9"),
+  perfCircle: NAVY,
+  perfLivre: NAVY,
+  perfPrevu: PINK,
+  closingText: NAVY,
+};
+
+const PALETTES: Record<string, Pal> = {
+  KROUSTY: {
+    ...PAL_DEFAULT,
+    ink: hx("#173820"),
+    panel: hx("#173820"),
+    barPrev: hx("#B8BF6D"),
+    barConso: hx("#F49B79"),
+    pill: hx("#F49B79"),
+    pillText: hx("#173820"),
+    circle1: hx("#91B6A3"),
+    circle2: hx("#516957"),
+    circle3: hx("#304D38"),
+    circleText: WHITE,
+    coverBg: hx("#173820"),
+    coverTitle: hx("#B8BF6D"),
+    coverText: WHITE,
+    perfCircle: hx("#173820"),
+    perfLivre: hx("#173820"),
+    perfPrevu: hx("#F49B79"),
+    closingText: hx("#173820"),
+  },
+  BLACK_WHITE: {
+    ...PAL_DEFAULT,
+    ink: hx("#381734"),
+    panel: hx("#171717"),
+    barPrev: hx("#000000"),
+    barConso: hx("#B4B4B4"),
+    pill: hx("#B4B4B4"),
+    pillText: hx("#171717"),
+    circle1: hx("#C2C2C2"),
+    circle2: hx("#7E7E7E"),
+    circle3: hx("#1C1C1C"),
+    circleText: WHITE,
+    coverBg: hx("#000000"),
+    coverTitle: WHITE,
+    coverText: WHITE,
+    perfCircle: hx("#000000"),
+    perfLivre: hx("#F6EFEF"),
+    perfPrevu: hx("#000000"),
+    // La page de fin B&W est en noir (référence), pas en prune.
+    closingText: hx("#171717"),
+  },
+};
 
 const PAGE_W = 960;
 const PAGE_H = 540;
@@ -81,8 +178,13 @@ interface Ctx {
   f: Fonts;
   icons: Record<string, PDFImage>;
   logoClient: PDFImage | null;
+  /** Variante du logo client pour fonds sombres (gabarit compact, B&W). */
+  logoClientDark: PDFImage | null;
+  /** Logo surimprimé sur la photo de couverture (B&W). */
+  coverLogo: PDFImage | null;
   logoMba: PDFImage;
   cover: PDFImage | null;
+  p: Pal;
   r: ReportContext;
 }
 
@@ -134,7 +236,7 @@ function txt(c: Ctx, s: string, x: number, yTop: number, o: TextOpts) {
     y: PAGE_H - yTop * S - size * 0.78,
     size,
     font,
-    color: o.color ?? NAVY,
+    color: o.color ?? c.p.ink,
   });
 }
 
@@ -305,9 +407,9 @@ function pageArticles(c: Ctx) {
   newPage(c);
   pageNumber(c, 3);
   txt(c, "Articles : Performance", 72, 85, { size: 52, font: c.f.xbold });
-  c.page.drawCircle({ x: X(90), y: Y(200), size: 5, color: NAVY });
+  c.page.drawCircle({ x: X(90), y: Y(200), size: 5, color: c.p.barPrev });
   txt(c, "Prévisions", 108, 188, { size: 22, font: c.f.med });
-  c.page.drawCircle({ x: X(290), y: Y(200), size: 5, color: PINK });
+  c.page.drawCircle({ x: X(290), y: Y(200), size: 5, color: c.p.barConso });
   txt(c, "Consommation", 308, 188, { size: 22, font: c.f.med });
 
   // Page 3 : uniquement les articles comparables (prévision ET consommation) —
@@ -338,8 +440,11 @@ function pageArticles(c: Ctx) {
   }
 
   const n = Math.max(arts.length, 1);
-  const rowH = Math.min(30, (chartBottom - chartTop) / n);
-  const barH = Math.min(11, rowH * 0.36);
+  // Peu de SKU (gabarit compact, ~11 refs) : lignes plus hautes et barres plus
+  // epaisses, comme les rapports de reference ; beaucoup de SKU (Pokawa, ~28) :
+  // meme rendu compact qu'avant (plafond inchange a 30/11).
+  const rowH = Math.min(72, (chartBottom - chartTop) / n);
+  const barH = rowH >= 48 ? Math.min(26, rowH * 0.36) : Math.min(11, rowH * 0.36);
   const scale = (axisX1 - axisX0) / axisMax;
 
   arts.forEach((a, i) => {
@@ -353,14 +458,14 @@ function pageArticles(c: Ctx) {
     const yPrev = yRow + rowH / 2 - barH - 1.5;
     const yCons = yRow + rowH / 2 + 1.5;
     if (a.forecast > 0) {
-      rrect(c, axisX0, yPrev, Math.max(a.forecast * scale, 4), barH, barH / 2, NAVY);
+      rrect(c, axisX0, yPrev, Math.max(a.forecast * scale, 4), barH, barH / 2, c.p.barPrev);
       txt(c, nf(a.forecast), axisX0 + a.forecast * scale + 10, yPrev - 3, {
         size: 15,
         font: c.f.med,
       });
     }
     if (a.consumption > 0) {
-      rrect(c, axisX0, yCons, Math.max(a.consumption * scale, 4), barH, barH / 2, PINK);
+      rrect(c, axisX0, yCons, Math.max(a.consumption * scale, 4), barH, barH / 2, c.p.barConso);
       txt(c, nf(a.consumption), axisX0 + a.consumption * scale + 10, yCons - 3, {
         size: 15,
         font: c.f.med,
@@ -369,11 +474,12 @@ function pageArticles(c: Ctx) {
     if (a.rate !== null) {
       const pw = 74,
         ph = 26;
-      rrect(c, 1205, yRow + rowH / 2 - ph / 2, pw, ph, ph / 2, PINK);
+      rrect(c, 1205, yRow + rowH / 2 - ph / 2, pw, ph, ph / 2, c.p.pill);
       txt(c, `${nf(a.rate)}%`, 1205 + pw / 2, yRow + rowH / 2 - 10, {
         size: 16,
         font: c.f.semi,
         align: "center",
+        color: c.p.pillText,
       });
     }
   });
@@ -382,19 +488,19 @@ function pageArticles(c: Ctx) {
     {
       label: ["Chiffre d'affaires", "attendu"],
       value: eur(c.r.kpi.ca_forecast),
-      color: CIRCLE_1,
+      color: c.p.circle1,
       cy: 325,
     },
     {
       label: ["Chiffre d'affaires", "actuel"],
       value: eur(c.r.kpi.ca_actual),
-      color: CIRCLE_2,
+      color: c.p.circle2,
       cy: 525,
     },
     {
       label: ["Taux de", "performance"],
       value: pct(c.r.kpi.performance_rate, 2),
-      color: CIRCLE_3,
+      color: c.p.circle3,
       cy: 725,
     },
   ];
@@ -402,10 +508,15 @@ function pageArticles(c: Ctx) {
     c.page.drawCircle({ x: X(1718), y: Y(ci.cy), size: 116 * S, color: ci.color });
     let ly = ci.cy - 46;
     for (const l of ci.label) {
-      txt(c, l, 1718, ly, { size: 23, align: "center" });
+      txt(c, l, 1718, ly, { size: 23, align: "center", color: c.p.circleText });
       ly += 29;
     }
-    txt(c, ci.value, 1718, ly + 8, { size: 21, font: c.f.bold, align: "center" });
+    txt(c, ci.value, 1718, ly + 8, {
+      size: 21,
+      font: c.f.bold,
+      align: "center",
+      color: c.p.circleText,
+    });
   }
 }
 
@@ -683,6 +794,464 @@ function pageClosing(c: Ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Gabarit compact (~8 pages) — réplique des rapports Krousty / Black & White
+// juin 2026 (géométrie mesurée sur les PDF de référence, repère 1920x1080).
+// ---------------------------------------------------------------------------
+
+/** Logos client + MBA en pied de page (gabarit compact). `onDark` choisit la
+ * variante de logo adaptée au fond (panneau sombre vs page claire). */
+function footerLogosC(c: Ctx, yTop = 985, onDark = false) {
+  const h = 56;
+  let xRight = 1856;
+  const mba = c.logoMba;
+  const wMba = (mba.width / mba.height) * h * S;
+  c.page.drawImage(mba, { x: X(xRight) - wMba, y: Y(yTop, h), width: wMba, height: h * S });
+  xRight -= wMba / S + 26;
+  txt(c, "x", xRight, yTop + 16, {
+    size: 22,
+    font: c.f.med,
+    align: "right",
+    color: onDark ? WHITE : c.p.ink,
+  });
+  xRight -= 28;
+  const logo = onDark ? (c.logoClientDark ?? c.logoClient) : c.logoClient;
+  if (logo) {
+    const wc = (logo.width / logo.height) * h * S;
+    c.page.drawImage(logo, { x: X(xRight) - wc, y: Y(yTop, h), width: wc, height: h * S });
+  } else {
+    txt(c, c.r.client.logo_text || c.r.client.display_name, xRight, yTop + 16, {
+      size: 22,
+      font: c.f.bold,
+      align: "right",
+      color: onDark ? WHITE : c.p.ink,
+    });
+  }
+}
+
+/** Carte blanche du gabarit compact : icône teintée, titre semi, lignes. */
+function cardC(
+  c: Ctx,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  iconName: string,
+  title: string,
+  lines: { text: string; big?: boolean }[]
+) {
+  rrect(c, x, y, w, h, 40, WHITE);
+  icon(c, iconName, x + 44, y + 44, 88);
+  const titleSize = 29;
+  const maxW = (w - 88) * S;
+  const words = title.split(" ");
+  const titleLines: string[] = [];
+  let line = "";
+  for (const wd of words) {
+    const test = line ? `${line} ${wd}` : wd;
+    if (c.f.semi.widthOfTextAtSize(test, titleSize * S) > maxW && line) {
+      titleLines.push(line);
+      line = wd;
+    } else line = test;
+  }
+  if (line) titleLines.push(line);
+  let ty = y + 172;
+  for (const tl of titleLines) {
+    txt(c, tl, x + 44, ty, { size: titleSize, font: c.f.semi });
+    ty += 38;
+  }
+  ty += 14;
+  for (const l of lines) {
+    txt(c, l.text, x + 44, ty, {
+      size: l.big ? 27 : 22,
+      font: l.big ? c.f.reg : c.f.reg,
+      color: l.big ? c.p.ink : GREY_TEXT,
+      maxW: w - 80,
+    });
+    ty += l.big ? 38 : 30;
+  }
+}
+
+function pageCoverCompact(c: Ctx) {
+  newPage(c, c.p.coverBg);
+  const { month, year } = monthYear(c.r.month_label);
+  txt(c, "RAPPORT MENSUEL", 960, 80, {
+    size: 96,
+    font: c.f.xbold,
+    align: "center",
+    color: c.p.coverTitle,
+  });
+  if (c.cover) {
+    const aspect = c.cover.width / c.cover.height;
+    // Photo large recadrée (Krousty, 2,44:1) ou 3:2 pleine (B&W) — mesuré sur
+    // les rapports de référence.
+    const w = (aspect > 2 ? 1395 : 919) * S;
+    const h = w / aspect;
+    const ix = (PAGE_W - w) / 2;
+    const iy = PAGE_H - 296 * S - h;
+    c.page.drawImage(c.cover, { x: ix, y: iy, width: w, height: h });
+    const cr = 13;
+    const corner = (px: number, py: number, sx: number, sy: number) => {
+      const path = `M 0 0 L ${cr * sx} 0 A ${cr} ${cr} 0 0 ${sx * sy > 0 ? 0 : 1} 0 ${cr * sy} Z`;
+      c.page.drawSvgPath(path, { x: px, y: py, color: c.p.coverBg });
+    };
+    corner(ix, iy + h, 1, 1);
+    corner(ix + w, iy + h, -1, 1);
+    corner(ix, iy, 1, -1);
+    corner(ix + w, iy, -1, -1);
+    if (c.coverLogo) {
+      // Logo blanc surimprimé au centre de la photo (B&W, position mesurée).
+      const lw = 490 * S;
+      const lh = (c.coverLogo.height / c.coverLogo.width) * lw;
+      c.page.drawImage(c.coverLogo, {
+        x: (PAGE_W - lw) / 2,
+        y: iy + h / 2 - lh / 2,
+        width: lw,
+        height: lh,
+      });
+    }
+  } else {
+    txt(c, c.r.client.logo_text || c.r.client.display_name, 960, 480, {
+      size: 72,
+      font: c.f.xbold,
+      align: "center",
+      color: c.p.coverTitle,
+    });
+  }
+  txt(c, month, 118, 920, { size: 44, font: c.f.med, color: c.p.coverText });
+  txt(c, year, 1842, 920, { size: 44, font: c.f.med, align: "right", color: c.p.coverText });
+}
+
+function pageKpiCompact(c: Ctx, num: number) {
+  newPage(c);
+  pageNumber(c, num);
+  txt(c, "Facteurs clés", 88, 115, { size: 58, font: c.f.xbold });
+  // Panneau plein jusqu'au bas de page (coins arrondis en haut uniquement).
+  rrect(c, 47, 295, 1824, 830, 35, c.p.panel);
+  const k = c.r.kpi;
+  const g = c.r.logistics.geodis;
+  const cw = 384,
+    ch = 428,
+    y0 = 401;
+  const xs = [108, 548, 987, 1427];
+  cardC(c, xs[0], y0, cw, ch, "articles", "Articles", [
+    { text: `SKU : ${nf(k.sku_count)}`, big: true },
+    {
+      text:
+        k.cartons_consumed !== undefined && k.cartons_consumed !== null
+          ? `Cartons : ${nf(k.cartons_consumed)}`
+          : `Pièces : ${nf(k.pieces_consumed)}`,
+      big: true,
+    },
+  ]);
+  cardC(c, xs[1], y0, cw, ch, "ca", "Chiffre d'affaires", [
+    { text: eur(k.ca_actual), big: true },
+  ]);
+  cardC(c, xs[2], y0, cw, ch, "livraisons", "Livraisons", [
+    { text: "Total de commandes :", big: true },
+    { text: nf(k.total_commandes), big: true },
+    { text: `${nf(k.total_cartons)} cartons`, big: true },
+  ]);
+  if (c.r.client.kpi4 === "horaire12") {
+    cardC(c, xs[3], y0, cw, ch, "taux", "Livraison avant 12:00", [
+      { text: pct(g.respect_horaires_12h), big: true },
+    ]);
+  } else {
+    cardC(c, xs[3], y0, cw, ch, "taux", "Taux de réussite des livraisons", [
+      { text: pct(k.taux_reussite), big: true },
+    ]);
+  }
+  footerLogosC(c, 985, true);
+}
+
+function pageLogistiqueCompact(c: Ctx, num: number, sommaire: boolean) {
+  newPage(c);
+  pageNumber(c, num);
+  txt(c, "Logistique", 88, 115, { size: 58, font: c.f.xbold });
+  rrect(c, 47, 282, 1824, 843, 35, c.p.panel);
+  if (sommaire) {
+    txt(c, "SOMMAIRE", 960, 330, { size: 36, font: c.f.semi, align: "center", color: WHITE });
+  }
+  const lg = c.r.logistics;
+  const cw = 306,
+    ch = 489,
+    y0 = 426;
+  const xs = [98, 458, 812, 1156, 1505];
+  const cards: { icon: string; title: string; value: string }[] = [
+    { icon: "pin", title: "Destinations livrés", value: nf(lg.restaurants_livres) },
+    { icon: "boxcheck", title: "Total commandes", value: nf(lg.total_commandes) },
+    { icon: "cartons", title: "Total cartons", value: nf(lg.total_cartons) },
+    { icon: "kg", title: "Total poids", value: `${nf(lg.total_poids, 2)} kg` },
+    { icon: "palette", title: "Total palettes", value: nf(lg.total_palettes ?? null) },
+  ];
+  cards.forEach((cd, i) => {
+    const x = xs[i];
+    rrect(c, x, y0, cw, ch, 40, WHITE);
+    icon(c, cd.icon, x + 40, y0 + 35, 96);
+    const maxW = (cw - 80) * S;
+    const words = cd.title.split(" ");
+    const tl: string[] = [];
+    let line = "";
+    for (const wd of words) {
+      const test = line ? `${line} ${wd}` : wd;
+      if (c.f.semi.widthOfTextAtSize(test, 29 * S) > maxW && line) {
+        tl.push(line);
+        line = wd;
+      } else line = test;
+    }
+    if (line) tl.push(line);
+    let ty = y0 + 151;
+    for (const t of tl) {
+      txt(c, t, x + 40, ty, { size: 29, font: c.f.semi });
+      ty += 38;
+    }
+    txt(c, cd.value, x + 40, Math.max(ty + 20, y0 + 253), { size: 28 });
+  });
+  footerLogosC(c, 985, true);
+}
+
+function pageHorairesCompact(c: Ctx, num: number) {
+  newPage(c);
+  pageNumber(c, num);
+  txt(c, "Horaires livraisons", 88, 190, { size: 58, font: c.f.xbold });
+  rrect(c, 0, 306, 1920, 810, 35, c.p.cream);
+  const h = c.r.logistics.geodis.horaires ?? null;
+  const pctOf = (n: number, tot: number, digits = 0) =>
+    tot > 0 ? `${nf(n)} (${nf((n / tot) * 100, digits)}%)` : nf(n);
+  const cards: { title: string; value: string }[] = [
+    { title: "Avant 12h", value: h ? pctOf(h.avant_12, h.total) : "-" },
+    { title: "Entre 12h et 14h", value: h ? pctOf(h.h12_14, h.total, 1) : "-" },
+    { title: "Après 14h", value: h ? pctOf(h.apres_14, h.total) : "-" },
+    {
+      title: "Livraisons conformes",
+      value: h ? pctOf(h.conformes, h.conformes_total) : "-",
+    },
+  ];
+  const xs = [300, 653, 1004, 1354];
+  cards.forEach((cd, i) => {
+    const x = xs[i],
+      y = 408,
+      cw = 288,
+      ch = 430;
+    rrect(c, x, y, cw, ch, 34, c.p.panel);
+    const maxW = (cw - 72) * S;
+    const words = cd.title.split(" ");
+    const tl: string[] = [];
+    let line = "";
+    for (const wd of words) {
+      const test = line ? `${line} ${wd}` : wd;
+      if (c.f.semi.widthOfTextAtSize(test, 27 * S) > maxW && line) {
+        tl.push(line);
+        line = wd;
+      } else line = test;
+    }
+    if (line) tl.push(line);
+    let ty = y + 55;
+    for (const t of tl) {
+      txt(c, t, x + 36, ty, { size: 27, font: c.f.semi, color: WHITE });
+      ty += 36;
+    }
+    txt(c, cd.value, x + 36, Math.max(ty + 24, y + 205), { size: 26, color: WHITE });
+  });
+  footerLogosC(c, 990, false);
+}
+
+function pagePerfCompact(c: Ctx, num: number) {
+  newPage(c);
+  pageNumber(c, num);
+  txt(c, "Logistique : Performance", 72, 105, { size: 52, font: c.f.xbold });
+  rrect(c, 48, 303, 1824, 822, 35, c.p.grey);
+
+  const g = c.r.logistics.geodis;
+  const fr = g.france;
+  const be = g.belgique_lux;
+  const total = fr.total_commandes + be.total_commandes;
+  const livrees = fr.livrees + be.livrees;
+  const rate = total > 0 ? Math.round((livrees / total) * 100) : null;
+  const b1 = fr.delay_buckets ?? { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null };
+  const b2 = be.delay_buckets ?? b1;
+  const leTotal = b1.total + (be.delay_buckets ? b2.total : 0);
+  const le48 = b1.le_48h + (be.delay_buckets ? b2.le_48h : 0);
+  const j72 = b1.j_72h + (be.delay_buckets ? b2.j_72h : 0);
+  const le48rate = leTotal > 0 ? Math.round((le48 / leTotal) * 1000) / 10 : null;
+
+  txt(c, "MESSAGERIE :", 560, 345, { size: 30, font: c.f.med });
+  // Cercle 1 : taux de livraison.
+  c.page.drawCircle({ x: X(675), y: Y(548), size: 76 * S, color: c.p.perfCircle });
+  txt(c, rate === null ? "-" : `${nf(rate)}%`, 675, 528, {
+    size: 28,
+    font: c.f.med,
+    align: "center",
+    color: WHITE,
+  });
+  const rows = [
+    { label: "Total commandes :", value: nf(total) },
+    { label: "Livrées :", value: nf(livrees) },
+  ];
+  const labelW = Math.max(...rows.map((rr) => c.f.reg.widthOfTextAtSize(rr.label, 30 * S)));
+  let ry = 495;
+  for (const rrow of rows) {
+    txt(c, rrow.label, 820, ry, { size: 30 });
+    txt(c, rrow.value, 820 + labelW / S + 34, ry, { size: 30 });
+    ry += 62;
+  }
+
+  // Cercle 2 : respect délais (<=48h ouvrées).
+  c.page.drawCircle({ x: X(675), y: Y(800), size: 76 * S, color: c.p.perfCircle });
+  txt(c, le48rate === null ? "-" : nf(le48rate, le48rate % 1 === 0 ? 0 : 1), 675, 780, {
+    size: 28,
+    font: c.f.med,
+    align: "center",
+    color: WHITE,
+  });
+  txt(c, "Respect délais jour", 815, 655, { size: 28, font: c.f.med });
+  const bars = [
+    { label: "A-C", livre: le48, prevu: leTotal },
+    { label: "A-D", livre: j72, prevu: 0 },
+  ];
+  const maxV = Math.max(1, ...bars.flatMap((b) => [b.livre, b.prevu]));
+  // Longueur max ~404 px ref. (mesuree : barre "Prevu" A-C du rapport Krousty).
+  const bx0 = 815,
+    bw = 404,
+    barH = 37;
+  let by = 749;
+  for (const b of bars) {
+    const pairH = b.prevu > 0 ? barH * 2 + 3 : barH;
+    txt(c, b.label, bx0 - 16, by + pairH / 2 - 12, { size: 20, align: "right" });
+    if (b.livre > 0) rrect(c, bx0, by, Math.max((b.livre / maxV) * bw, 8), barH, 4, c.p.perfLivre);
+    if (b.prevu > 0)
+      rrect(c, bx0, by + barH + 3, Math.max((b.prevu / maxV) * bw, 8), barH, 4, c.p.perfPrevu);
+    by += pairH + 10;
+  }
+  // Légende sur pastille blanche.
+  rrect(c, 730, 908, 700, 66, 33, WHITE);
+  c.page.drawCircle({ x: X(800), y: Y(941), size: 16 * S, color: c.p.perfLivre });
+  txt(c, "Livré", 830, 925, { size: 24 });
+  c.page.drawCircle({ x: X(1030), y: Y(941), size: 16 * S, color: c.p.perfPrevu });
+  txt(c, "Prévu", 1060, 925, { size: 24 });
+  footerLogosC(c, 1020, false);
+}
+
+function pageFinancesCompact(c: Ctx, num: number) {
+  newPage(c);
+  pageNumber(c, num);
+  txt(c, "Données Financières", 80, 95, { size: 58, font: c.f.xbold });
+  rrect(c, 47, 282, 1824, 843, 35, c.p.panel);
+  const fin = c.r.financials;
+  const regl = [
+    fin.reglement_livraison,
+    fin.reglement_commande,
+    fin.reglement_30_classique,
+    fin.reglement_escompte_2,
+    fin.reglement_30_sepa,
+    fin.reglement_45_sepa,
+  ]
+    .map(asNum)
+    .filter((v): v is number => v !== null);
+  const totalReglements = regl.length > 0 ? Math.round(regl.reduce((s, v) => s + v, 0) * 100) / 100 : null;
+
+  const cards: { x: number; y: number; icon: string; title: string; value: string }[] = [
+    { x: 709, y: 325, icon: "ca", title: "Chiffre d'affaires", value: eur(asNum(fin.ca_total)) },
+    {
+      x: 434,
+      y: 669,
+      icon: "handcoin2",
+      title: "Commission à payer - référencement",
+      value: eur(asNum(fin.commissions)),
+    },
+    {
+      x: 1037,
+      y: 669,
+      icon: "receipt2",
+      title: "Total des règlements",
+      value: eur(totalReglements),
+    },
+  ];
+  for (const cd of cards) {
+    const cw = 501,
+      ch = 302;
+    rrect(c, cd.x, cd.y, cw, ch, 40, WHITE);
+    icon(c, cd.icon, cd.x + 44, cd.y + 35, 70);
+    const maxW = (cw - 88) * S;
+    const words = cd.title.split(" ");
+    const tl: string[] = [];
+    let line = "";
+    for (const wd of words) {
+      const test = line ? `${line} ${wd}` : wd;
+      if (c.f.bold.widthOfTextAtSize(test, 26 * S) > maxW && line) {
+        tl.push(line);
+        line = wd;
+      } else line = test;
+    }
+    if (line) tl.push(line);
+    let ty = cd.y + 140 - (tl.length - 1) * 16;
+    for (const t of tl) {
+      txt(c, t, cd.x + 44, ty, { size: 26, font: c.f.bold });
+      ty += 34;
+    }
+    txt(c, cd.value, cd.x + 44, Math.max(ty + 12, cd.y + 210), { size: 34 });
+  }
+  footerLogosC(c, 985, true);
+}
+
+function pageClosingCompact(c: Ctx) {
+  newPage(c, WHITE);
+  const { month, year } = monthYear(c.r.month_label);
+  // Logos client x MBA, centrés.
+  const h = 130 * S;
+  const gap = 40 * S;
+  const mba = c.logoMba;
+  const wMba = (mba.width / mba.height) * h;
+  const xW = c.f.med.widthOfTextAtSize("X", 26 * S);
+  let wCl = 0;
+  if (c.logoClient) wCl = (c.logoClient.width / c.logoClient.height) * h;
+  const totalW = wCl + (wCl ? gap * 2 + xW : 0) + wMba;
+  let lx = (PAGE_W - totalW) / 2;
+  const lyTop = 400;
+  const ly = PAGE_H - lyTop * S - h;
+  if (c.logoClient) {
+    c.page.drawImage(c.logoClient, { x: lx, y: ly, width: wCl, height: h });
+    lx += wCl + gap;
+    c.page.drawText("X", {
+      x: lx,
+      y: ly + h / 2 - (26 * S) / 2,
+      size: 26 * S,
+      font: c.f.med,
+      color: c.p.ink,
+    });
+    lx += xW + gap;
+  }
+  c.page.drawImage(mba, { x: lx, y: ly, width: wMba, height: h });
+
+  txt(c, "RAPPORT MENSUEL", 960, 672, {
+    size: 170,
+    align: "center",
+    maxW: 1750,
+    color: c.p.closingText,
+  });
+  txt(c, month, 118, 930, { size: 44, font: c.f.med, color: c.p.closingText });
+  txt(c, year, 1842, 930, { size: 44, font: c.f.med, align: "right", color: c.p.closingText });
+}
+
+/** Rendu du gabarit compact. Numérotation calquée sur les rapports de
+ * référence : 02 Facteurs clés, 03 Articles, 06 Logistique, puis 07/08/09
+ * (les pages 04-05 du gabarit long n'existent pas dans ce format). */
+function renderCompact(c: Ctx) {
+  pageCoverCompact(c);
+  pageKpiCompact(c, 2);
+  pageArticles(c);
+  // "SOMMAIRE" affiché sur le panneau Logistique du gabarit B&W (référence).
+  pageLogistiqueCompact(c, 6, c.r.client.kpi4 !== "horaire12");
+  let num = 7;
+  if (c.r.client.show_horaires) {
+    pageHorairesCompact(c, num);
+    num++;
+  }
+  pagePerfCompact(c, num);
+  pageFinancesCompact(c, num + 1);
+  pageClosingCompact(c);
+}
+
+// ---------------------------------------------------------------------------
 // Entrée principale
 // ---------------------------------------------------------------------------
 export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Array> {
@@ -703,14 +1272,48 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
     icons[k] = await doc.embedPng(Buffer.from(v, "base64"));
   }
 
-  const clientKey = Object.keys(CLIENT_ASSETS).find((k) =>
-    (r.client.logo_text || r.client.display_name || "").toUpperCase().includes(k)
-  );
-  const clientAssets = (clientKey ? CLIENT_ASSETS[clientKey] : undefined) ?? {};
+  // Clé d'enseigne : normalisation tolérante ("BLACK & WHITE" / "BLACK AND
+  // WHITE" ↔ BLACK_WHITE) pour retrouver palette, assets et icônes teintées.
+  const norm = (s: string) =>
+    s
+      .toUpperCase()
+      .replace(/\bAND\b/g, "")
+      .replace(/[^A-Z0-9]/g, "");
+  const clientName = r.client.logo_text || r.client.display_name || "";
+  const allBrandKeys = new Set([
+    ...Object.keys(CLIENT_ASSETS),
+    ...Object.keys(COMPACT_ASSETS),
+    ...Object.keys(PALETTES),
+  ]);
+  const clientKey = norm(clientName)
+    ? [...allBrandKeys].find(
+        (k) => norm(clientName).includes(norm(k)) || norm(k).includes(norm(clientName))
+      )
+    : undefined;
+
+  const compact = r.client.template === "compact";
+  const clientAssets: { coverJpg?: string; logo?: string; logoDark?: string; coverLogo?: string } =
+    (clientKey ? (compact ? COMPACT_ASSETS[clientKey] : CLIENT_ASSETS[clientKey]) : undefined) ??
+    (clientKey ? CLIENT_ASSETS[clientKey] : undefined) ??
+    {};
+
+  // Icônes teintées à l'encre de l'enseigne (gabarit compact) — remplacent
+  // les icônes du set Pokawa quand elles existent.
+  if (clientKey && COMPACT_ICONS[clientKey]) {
+    for (const [k, v] of Object.entries(COMPACT_ICONS[clientKey])) {
+      icons[k] = await doc.embedPng(Buffer.from(v, "base64"));
+    }
+  }
 
   const logoMba = await doc.embedPng(Buffer.from(IMAGES.logoMba, "base64"));
   const logoClient = clientAssets.logo
     ? await doc.embedPng(Buffer.from(clientAssets.logo, "base64"))
+    : null;
+  const logoClientDark = clientAssets.logoDark
+    ? await doc.embedPng(Buffer.from(clientAssets.logoDark, "base64"))
+    : null;
+  const coverLogo = clientAssets.coverLogo
+    ? await doc.embedPng(Buffer.from(clientAssets.coverLogo, "base64"))
     : null;
   const cover = clientAssets.coverJpg
     ? await doc.embedJpg(Buffer.from(clientAssets.coverJpg, "base64"))
@@ -722,10 +1325,18 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
     f,
     icons,
     logoClient,
+    logoClientDark,
+    coverLogo,
     logoMba,
     cover,
+    p: (clientKey ? PALETTES[clientKey] : undefined) ?? PAL_DEFAULT,
     r,
   };
+
+  if (compact) {
+    renderCompact(c);
+    return await doc.save();
+  }
 
   const g = r.logistics.geodis;
   const gl = r.logistics.gls;

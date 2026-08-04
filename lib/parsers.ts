@@ -545,6 +545,9 @@ export function parseGeodis(buffer: ArrayBuffer, clientCfg: ClientConfig): Geodi
     restaurants_livres: restaurants.size,
     total_commandes: clientRows.length,
     total_cartons: totalCartons,
+    // L'export Excel GEODIS ne porte pas de colonne palettes exploitable ici —
+    // la voie live (Supabase shipments.nb_palettes) fournit la vraie valeur.
+    total_palettes: 0,
     total_poids: round(totalPoids, 2),
     taux_reussite: clientRows.length ? Math.round((delivered.length / clientRows.length) * 100) : null,
     france: countryStats(byCountry["FR"] || [], false, true),

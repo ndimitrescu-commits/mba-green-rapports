@@ -16,6 +16,14 @@ export interface ClientConfig {
    * record -- every restaurant is a sub-customer under it. Used to filter
    * consumption queries per client. See lib/netsuiteData.ts. */
   netsuite_parent_id: number;
+  /** Gabarit du rapport : "full" (12 pages, ex-Pokawa) ou "compact"
+   * (~8 pages, ex-Krousty / Black & White). Défaut : "full". */
+  template?: "full" | "compact";
+  /** 4e carte "Facteurs clés" du gabarit compact : "horaire12"
+   * (Livraison avant 12:00, Krousty) ou "taux" (Taux de réussite, défaut). */
+  kpi4?: "horaire12" | "taux";
+  /** Page "Horaires livraisons" (gabarit compact, Krousty uniquement). */
+  show_horaires?: boolean;
 }
 
 export type ClientsConfig = Record<string, ClientConfig>;
@@ -82,11 +90,27 @@ export interface ServiceStats {
   rate: number | null;
 }
 
+/** Répartition des heures de livraison Messagerie France (page "Horaires
+ * livraisons" du gabarit compact). `conformes` = livraisons dans le délai
+ * attendu (<=48h ouvrées, même définition que delay_buckets.le_48h). Null si
+ * la source ne porte pas d'heure réelle de livraison (cas Supabase actuel :
+ * date_livraison_reelle à minuit). */
+export interface HoraireStats {
+  total: number;
+  avant_12: number;
+  h12_14: number;
+  apres_14: number;
+  conformes: number;
+  conformes_total: number;
+}
+
 export interface GeodisResult {
   restaurant_names: Set<string>;
   restaurants_livres: number;
   total_commandes: number;
   total_cartons: number;
+  /** Somme des palettes (colonne nb_palettes de shipments). */
+  total_palettes: number;
   total_poids: number;
   taux_reussite: number | null;
   france: CountryStats;
@@ -118,6 +142,8 @@ export interface GeodisResult {
    * d'écart avec la référence, cause exacte non identifiée). */
   respect_horaires_12h: number | null;
   respect_horaires_11h: number | null;
+  /** Répartition horaires (gabarit compact) — null si pas d'heures réelles. */
+  horaires?: HoraireStats | null;
 }
 
 export interface GlsResult {
@@ -184,6 +210,8 @@ export interface ReportContext {
     corner_wasabi: number;
     total_commandes: number | null;
     total_cartons: number;
+    /** Palettes GEODIS (GLS n'en transporte pas) — gabarit compact. */
+    total_palettes?: number;
     total_poids: number;
     geodis_share: number | null;
     gls_share: number | null;

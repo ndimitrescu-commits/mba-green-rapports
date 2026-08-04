@@ -20,7 +20,13 @@ import {
   fetchTransitByItem,
 } from "./netsuiteData";
 import { fetchFinancials, fetchReferencingCommission } from "./netsuiteFinancials";
-import { readForecast, readPrices, readCommissions, type ForecastRow } from "./googleSheets";
+import {
+  hasForecastTab,
+  readForecast,
+  readPrices,
+  readCommissions,
+  type ForecastRow,
+} from "./googleSheets";
 import type {
   ArticleItem,
   ClientConfig,
@@ -109,6 +115,21 @@ export function getClientsConfig(): ClientsConfig {
 /** Python dict.get(key, default) semantics: key-presence check, not truthiness. */
 function dget<T = unknown>(obj: Record<string, unknown>, key: string, def: T): T {
   return key in obj && obj[key] !== undefined ? (obj[key] as T) : def;
+}
+
+/**
+ * Prévisions du client. Pour une enseigne sans onglet Prévisionnel dédié
+ * (ex. Black & White), le repli hebdomadaire du Demand Planning est restreint
+ * aux références du catalogue NetSuite de son niveau de prix (scopeRefs) —
+ * sinon la colonne "Client" vide de Forecast_Client ferait tout remonter.
+ */
+async function readForecastForClient(
+  clientKey: string,
+  cfg: ClientConfig
+): Promise<ForecastRow[]> {
+  if (hasForecastTab(clientKey)) return readForecast(clientKey);
+  const catalog = await fetchCatalogPriceByCarton(cfg.netsuite_parent_id);
+  return readForecast(clientKey, new Set(catalog.keys()));
 }
 
 interface ArticlesResult {
@@ -314,7 +335,7 @@ export async function buildReportContext(
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
   const [forecastRows, commissionRates] = await Promise.all([
-    readForecast(clientKey),
+    readForecastForClient(clientKey, cfg),
     readCommissions(clientKey),
   ]);
 
@@ -427,6 +448,7 @@ export async function buildReportContext(
       corner_wasabi: totalCornerWasabi,
       total_commandes: orderCountTotal,
       total_cartons: totalCartons,
+      total_palettes: geodis.total_palettes ?? 0,
       total_poids: totalPoids,
       geodis_share: geodisShare,
       gls_share: glsShare,
@@ -466,7 +488,7 @@ export async function buildReportContextWithLogistics(
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
   const [forecastRows, commissionRates] = await Promise.all([
-    readForecast(clientKey),
+    readForecastForClient(clientKey, cfg),
     readCommissions(clientKey),
   ]);
 
@@ -550,6 +572,7 @@ export async function buildReportContextWithLogistics(
       corner_wasabi: totalCornerWasabi,
       total_commandes: orderCountTotal,
       total_cartons: totalCartons,
+      total_palettes: geodis.total_palettes ?? 0,
       total_poids: totalPoids,
       geodis_share: geodisShare,
       gls_share: glsShare,

@@ -81,7 +81,7 @@ const ctx: ReportContext = {
     total_poids: 32915.65, geodis_share: 48, gls_share: 52,
     geodis: {
       restaurant_names: new Set(), restaurants_livres: 103, total_commandes: 251,
-      total_cartons: 2704, total_poids: 24596.53, taux_reussite: 100,
+      total_cartons: 2704, total_palettes: 0, total_poids: 24596.53, taux_reussite: 100,
       france: { total_commandes: 244, livrees: 243, rate: 100,
         delay_buckets: { total: 244, le_48h: 190, le_48h_rate: 78, j_72h: 42, j_72h_rate: 17, plus_72h: 12, plus_72h_rate: 5 } },
       belgique_lux: { total_commandes: 7, livrees: 7, rate: 100, by_country: { BE: 6, LU: 0, CH: 1 },

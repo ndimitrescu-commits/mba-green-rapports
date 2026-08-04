@@ -38,7 +38,16 @@ const CLIENT_TABS: Record<string, string> = {
   KROUSTY: "Krousty",
   LUKS_KEBAB: "Luks Kebab",
   KAZDALERIE: "La Kazdalerie",
+  // BLACK_WHITE : pas d'onglet Prévisionnel à ce jour — readForecast passe
+  // directement au repli hebdomadaire (Forecast_Client) restreint aux
+  // références du catalogue NetSuite de l'enseigne (scopeRefs).
 };
+
+/** L'enseigne a-t-elle un onglet Prévisionnel dédié ? (sinon, prévoir un
+ * `scopeRefs` pour le repli hebdomadaire de readForecast). */
+export function hasForecastTab(clientKey: string): boolean {
+  return clientKey in CLIENT_TABS;
+}
 
 export interface ForecastRow {
   month: string;
@@ -122,6 +131,18 @@ function str(v: unknown): string {
   return v === null || v === undefined ? "" : String(v).trim();
 }
 
+/** Compare la colonne "Client" des onglets Prix/Commission à la clé client,
+ * en tolérant les variantes d'écriture ("Black & White", "BLACK AND WHITE",
+ * "BLACK_WHITE" → même enseigne). */
+function sameClient(cell: string, clientKey: string): boolean {
+  const norm = (s: string) =>
+    s
+      .toUpperCase()
+      .replace(/\bAND\b/g, "")
+      .replace(/[^A-Z0-9]/g, "");
+  return norm(cell) === norm(clientKey);
+}
+
 /** Ligne d'en-tête ou vide -> à ignorer. */
 function isHeaderOrEmpty(cells: string[]): boolean {
   const first = (cells[0] ?? "").toLowerCase();
@@ -195,22 +216,36 @@ async function readGlobalWeeklyForecast(): Promise<Map<string, Map<number, numbe
  * ⚠️ Limite connue : la colonne "Client" de Forecast_Client étant vide, une
  * référence partagée entre clients (ex. LID149PP Pokawa/Krousty) y porte le
  * volume global tous clients — le repli surestime alors ce SKU.
+ *
+ * `scopeRefs` (optionnel) : univers de références de l'enseigne (typiquement
+ * les références du catalogue NetSuite de son niveau de prix). Utilisé comme
+ * périmètre du repli hebdomadaire pour les enseignes SANS onglet Prévisionnel
+ * (ex. Black & White) — sans lui, ces enseignes n'auraient aucune prévision.
  */
-export async function readForecast(clientKey: string): Promise<ForecastRow[]> {
-  const rows = await readRange(`'${tabForClient(clientKey)}'!A1:C`);
+export async function readForecast(
+  clientKey: string,
+  scopeRefs?: Set<string>
+): Promise<ForecastRow[]> {
   const out: ForecastRow[] = [];
-  for (const raw of rows) {
-    const cells = raw.map(str);
-    if (isHeaderOrEmpty(cells)) continue;
-    const reference = cells[0];
-    const month = cells[1];
-    const qty = num(raw[2]);
-    if (!reference || !/^\d{4}-\d{2}$/.test(month) || !Number.isFinite(qty)) continue;
-    out.push({ reference, month, quantity_cartons: qty });
+  if (hasForecastTab(clientKey)) {
+    const rows = await readRange(`'${tabForClient(clientKey)}'!A1:C`);
+    for (const raw of rows) {
+      const cells = raw.map(str);
+      if (isHeaderOrEmpty(cells)) continue;
+      const reference = cells[0];
+      const month = cells[1];
+      const qty = num(raw[2]);
+      if (!reference || !/^\d{4}-\d{2}$/.test(month) || !Number.isFinite(qty)) continue;
+      out.push({ reference, month, quantity_cartons: qty });
+    }
+  } else if (!scopeRefs || scopeRefs.size === 0) {
+    throw new Error(
+      `Client '${clientKey}' sans onglet Prévisionnel et sans références de repli (scopeRefs) — prévisions indisponibles.`
+    );
   }
 
   // Repli hebdomadaire pour les mois non couverts par le Prévisionnel.
-  const clientRefs = new Set(out.map((r) => r.reference));
+  const clientRefs = out.length > 0 ? new Set(out.map((r) => r.reference)) : (scopeRefs ?? new Set<string>());
   if (clientRefs.size === 0) return out; // pas d'univers client -> pas de repli scoping possible
   const monthsCovered = new Set(out.map((r) => r.month));
 
@@ -249,7 +284,7 @@ export async function readPrices(clientKey: string): Promise<Map<string, number>
   for (const raw of rows) {
     const cells = raw.map(str);
     if (isHeaderOrEmpty(cells)) continue;
-    if (cells[0].toUpperCase() !== clientKey.toUpperCase()) continue;
+    if (!sameClient(cells[0], clientKey)) continue;
     const reference = cells[1];
     const price = num(raw[2]);
     if (!reference || !Number.isFinite(price)) continue;
@@ -269,7 +304,7 @@ export async function readCommissions(clientKey: string): Promise<Record<string,
   for (const raw of rows) {
     const cells = raw.map(str);
     if (isHeaderOrEmpty(cells)) continue;
-    if (cells[0].toUpperCase() !== clientKey.toUpperCase()) continue;
+    if (!sameClient(cells[0], clientKey)) continue;
     const reference = cells[1];
     const rate = num(raw[2]);
     if (!reference || !Number.isFinite(rate)) continue;

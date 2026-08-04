@@ -19,9 +19,9 @@
   },
   "KROUSTY": {
     "display_name": "Krousty",
-    "brand_color": "#7A1F1F",
-    "accent_color": "#F3D6B0",
-    "background_color": "#FBF1E6",
+    "brand_color": "#173820",
+    "accent_color": "#B8BF6D",
+    "background_color": "#F1E9D6",
     "data_feb_file_pattern": "KROUSTY_DATA",
     "breakdown_sheet_name": "KROUSTY",
     "financial_column": "Krousty",
@@ -31,7 +31,31 @@
     ],
     "restaurant_name_aliases": [],
     "corner_wasabi_count_manual": 0,
-    "netsuite_parent_id": 189320
+    "netsuite_parent_id": 189320,
+    "template": "compact",
+    "kpi4": "horaire12",
+    "show_horaires": true
+  },
+  "BLACK_WHITE": {
+    "display_name": "Black & White Burger",
+    "brand_color": "#171717",
+    "accent_color": "#B4B4B4",
+    "background_color": "#F6EFEF",
+    "data_feb_file_pattern": "BLACK_WHITE_DATA",
+    "breakdown_sheet_name": "BLACK & WHITE",
+    "financial_column": "Black & White",
+    "logo_text": "BLACK & WHITE",
+    "restaurant_name_matches": [
+      "BLACK & WHITE",
+      "BLACK AND WHITE",
+      "BLACK&WHITE"
+    ],
+    "restaurant_name_aliases": [],
+    "corner_wasabi_count_manual": 0,
+    "netsuite_parent_id": 194089,
+    "template": "compact",
+    "kpi4": "taux",
+    "show_horaires": false
   },
   "LUKS_KEBAB": {
     "display_name": "L\u00fcks Kebab",

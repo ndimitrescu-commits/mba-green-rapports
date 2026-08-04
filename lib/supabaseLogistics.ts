@@ -132,6 +132,8 @@ export interface GeodisRow {
   outcome: string | null;
   poids: number | null;
   nb_colis: number | null;
+  /** Nombre de palettes de l'expédition (envois palettisés 2026). */
+  nb_palettes?: number | null;
   /** Référence expéditeur GEODIS, ex. "SO48234 - 7 COLIS" — porte le nombre
    * de cartons pour les envois palettisés où nb_colis vaut 0. */
   reference1?: string | null;
@@ -141,7 +143,7 @@ export interface GeodisRow {
 }
 
 const GEODIS_COLS =
-  "nom_dest,client_nom,type_prestation,code_produit,code_pays_dest,outcome,poids,nb_colis,reference1,date_depart,date_livraison_prevue,date_livraison_reelle";
+  "nom_dest,client_nom,type_prestation,code_produit,code_pays_dest,outcome,poids,nb_colis,nb_palettes,reference1,date_depart,date_livraison_prevue,date_livraison_reelle";
 
 /**
  * Cartons d'une expédition GEODIS : nb_colis quand il est renseigné, sinon le
@@ -239,6 +241,7 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
   const holidays = frenchHolidays(year);
   const names = new Set(rows.map((r) => up(r.nom_dest).trim()).filter(Boolean));
   const totalCartons = rows.reduce((s, r) => s + geodisCartons(r), 0);
+  const totalPalettes = rows.reduce((s, r) => s + toNum(r.nb_palettes), 0);
   const totalPoids = round(rows.reduce((s, r) => s + toNum(r.poids), 0));
   const livrees = rows.filter((r) => r.outcome === "livre").length;
   const decided = rows.filter((r) => r.outcome !== null).length;
@@ -281,6 +284,23 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
   const before12 = withHour.filter((p) => p.hour <= 12).length;
   const before11 = withHour.filter((p) => p.hour <= 11).length;
 
+  // Page "Horaires livraisons" (gabarit compact) : répartition <12h / 12-14h /
+  // >14h sur la Messagerie France + "conformes" (= livrées <=48h ouvrées, même
+  // définition que delay_buckets.le_48h). Null tant que la source ne porte pas
+  // d'heure réelle (flux tracking GEODIS actuel : dates à minuit).
+  const franceBuckets = computeBuckets(franceRows);
+  const horaires =
+    withHour.length > 0
+      ? {
+          total: withHour.length,
+          avant_12: before12,
+          h12_14: withHour.filter((p) => p.hour > 12 && p.hour <= 14).length,
+          apres_14: withHour.filter((p) => p.hour > 14).length,
+          conformes: franceBuckets.le_48h,
+          conformes_total: franceBuckets.total,
+        }
+      : null;
+
   // Moyenne/jours : commandes / jours ouvrés distincts avec expédition.
   const departDays = new Set(
     rows
@@ -296,6 +316,7 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
     restaurants_livres: names.size,
     total_commandes: totalCmds,
     total_cartons: totalCartons,
+    total_palettes: totalPalettes,
     total_poids: totalPoids,
     taux_reussite: decided > 0 ? round((livrees / decided) * 100, 0) : null,
     france: countryStats(franceRows, false),
@@ -337,6 +358,7 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
     corner_wasabi_count: [...names].filter((n) => n.includes("WASABI")).length,
     respect_horaires_12h: withHour.length > 0 ? round((before12 / withHour.length) * 100, 0) : null,
     respect_horaires_11h: withHour.length > 0 ? round((before11 / withHour.length) * 100, 2) : null,
+    horaires,
   };
 }
 
