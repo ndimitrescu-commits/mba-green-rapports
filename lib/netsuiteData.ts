@@ -66,10 +66,41 @@ export async function fetchConsumptionCartons(
 }
 
 /**
+ * Prix catalogue (€ HT / carton) par article, au niveau de prix NetSuite du
+ * groupe client (ex. "Pokawa France"). Le niveau retenu est le plus fréquent
+ * parmi les clients enfants du parent (Pokawa : 167/187 sur "Pokawa France").
+ * Unité validée sur le compte (03/08/2026) : `pricing.unitprice` est exprimé
+ * par unité de vente = carton (BL500PO 82,80 € ≈ 82,59 € facturé/carton).
+ */
+export async function fetchCatalogPriceByCarton(parentId: number): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const levels = await suiteql<{ pricelevel: number | null; nb: number }>(
+    `SELECT pricelevel, COUNT(*) AS nb FROM customer
+     WHERE parent = ${Number(parentId)} GROUP BY pricelevel`
+  );
+  const dominant = levels
+    .filter((l) => l.pricelevel !== null)
+    .sort((a, b) => Number(b.nb) - Number(a.nb))[0]?.pricelevel;
+  if (dominant === undefined || dominant === null) return out;
+  const rows = await suiteql<{ itemid: string; unitprice: number }>(
+    `SELECT i.itemid AS itemid, MAX(p.unitprice) AS unitprice
+     FROM pricing p
+     JOIN item i ON i.id = p.item
+     WHERE p.pricelevel = ${Number(dominant)}
+       AND NVL(p.quantity, 1) = 1
+     GROUP BY i.itemid`
+  );
+  for (const r of rows) {
+    const price = Number(r.unitprice);
+    if (Number.isFinite(price) && price > 0) out.set(String(r.itemid), price);
+  }
+  return out;
+}
+
+/**
  * Prix unitaire carton moyen réalisé (€ HT / carton) par article sur la
- * période, d'après les factures. Sert de repli quand l'onglet "Prix" du
- * Prévisionnel n'a pas de ligne pour l'article : le "CA attendu" (prévisions
- * × prix unitaire) reste alors calculable avec le prix effectivement facturé.
+ * période, d'après les factures. Dernier recours quand ni l'onglet "Prix" du
+ * Prévisionnel ni le catalogue NetSuite n'ont de prix pour l'article.
  */
 export async function fetchAvgPriceByCarton(
   parentId: number,

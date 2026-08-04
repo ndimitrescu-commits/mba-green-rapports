@@ -14,6 +14,7 @@ import clientsConfig from "./clients.json";
 import * as parsers from "./parsers";
 import {
   fetchAvgPriceByCarton,
+  fetchCatalogPriceByCarton,
   fetchConsumptionCartons,
   fetchStockOnHand,
   fetchTransitByItem,
@@ -139,13 +140,17 @@ async function buildArticles(
   month: ParsedMonth,
   forecastRows: ForecastRow[]
 ): Promise<ArticlesResult> {
-  // Prix unitaire carton : onglet "Prix" du Prévisionnel prioritaire, repli
-  // sur le prix moyen réalisé du mois (factures NetSuite) — ainsi le
-  // "CA attendu" (= prévisions × prix unitaire) est calculable même tant que
-  // la table de prix n'est pas remplie.
-  const [consumption, prices, avgPrices] = await Promise.all([
+  // Prix unitaire carton, par ordre de priorité :
+  //  1. onglet "Prix" du Prévisionnel (saisie manuelle, si remplie) ;
+  //  2. prix catalogue NetSuite du niveau de prix du groupe client
+  //     (ex. "Pokawa France") — le vrai tarif, y compris pour des références
+  //     prévues mais pas facturées dans le mois ;
+  //  3. prix moyen réalisé du mois (factures) en dernier recours.
+  // "CA attendu" = prévisions × prix unitaire.
+  const [consumption, prices, catalogPrices, avgPrices] = await Promise.all([
     fetchConsumptionCartons(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
     readPrices(clientKey),
+    fetchCatalogPriceByCarton(cfg.netsuite_parent_id),
     fetchAvgPriceByCarton(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
   ]);
 
@@ -171,7 +176,7 @@ async function buildArticles(
     const forecastCartons = forecastMap.get(code) ?? 0;
     const cons = consumptionMap.get(code);
     const consCartons = cons?.qty ?? 0;
-    const price = prices.get(code) ?? avgPrices.get(code) ?? 0;
+    const price = prices.get(code) ?? catalogPrices.get(code) ?? avgPrices.get(code) ?? 0;
     const rate = forecastCartons ? Math.round((consCartons / forecastCartons) * 100) : null;
 
     items.push({
