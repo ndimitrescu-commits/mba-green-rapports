@@ -108,9 +108,14 @@ export default function HomePage() {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <h1 style={{ fontSize: 28, marginTop: 0 }}>Rapport mensuel client</h1>
-          <a href="/prevision" style={{ color: "#1B1F5E", fontSize: 14 }}>
-            Prévisionnel →
-          </a>
+          <span style={{ display: "flex", gap: 16 }}>
+            <a href="/preview" style={{ color: "#1B1F5E", fontSize: 14, fontWeight: 700 }}>
+              Aperçu &amp; édition →
+            </a>
+            <a href="/prevision" style={{ color: "#1B1F5E", fontSize: 14 }}>
+              Prévisionnel →
+            </a>
+          </span>
         </div>
 
         {error && (
