@@ -219,44 +219,16 @@ export async function fetchFinancials(
   };
 }
 
-/** Taux RFA minimal attendu par le calcul de commission (voir lib/rfaRates.ts). */
-export interface RfaRateForCalc {
-  reference: string;
-  rfa_par_colis: number | null;
-  commission_pct: number | null;
-}
-
-/**
- * Commission de référencement, base "facturé uniquement" (règle métier
- * confirmée par Nicolas, 05/08/2026 : les commissions aux groupes sont dues
- * sur ce qui a été facturé). Pour chaque article, sur les lignes de factures
- * liées aux Sales Orders du mois :
- *  1. taux Supabase `rfa_par_colis` (€ / colis) : colis facturés x montant —
- *     colis = pièces facturées / conversion carton (saleunit NetSuite) ;
- *  2. sinon taux Supabase `commission_pct` : % x CA HT facturé ;
- *  3. sinon taux de l'onglet "Commission" du Google Sheet (repli historique,
- *     fraction x CA HT facturé).
- * Une commande annulée ou pas encore facturée ne contribue pas ; une commande
- * partiellement facturée contribue à hauteur du facturé.
- * Renvoie null tant qu'aucun taux n'est configuré.
- */
-export async function fetchReferencingCommission(
+/** Agrégat facturé par article (lignes de factures liées aux Sales Orders du
+ * mois) : pièces, pièces/colis (unité de vente NetSuite) et montant HT.
+ * Base commune du calcul de commission (Sheet % ou référentiel rfa_rates). */
+async function fetchInvoicedByItem(
   parentId: number,
   dateFrom: string,
-  dateTo: string,
-  commissionRates: Record<string, number> | null | undefined,
-  rfaRates?: RfaRateForCalc[] | null
-): Promise<number | null> {
-  const hasSheet = !!commissionRates && Object.keys(commissionRates).length > 0;
-  const hasRfa = !!rfaRates && rfaRates.length > 0;
-  if (!hasSheet && !hasRfa) return null;
+  dateTo: string
+): Promise<{ itemid: string; qty_pieces: number; per_carton: number; total_ht: number }[]> {
   const toExcl = nextDay(dateTo);
-  const rows = await suiteql<{
-    itemid: string;
-    qty_pieces: number;
-    per_carton: number | null;
-    total_ht: number;
-  }>(
+  return suiteql(
     `SELECT i.itemid AS itemid,
             SUM(-til.quantity) AS qty_pieces,
             MAX(NVL(u.conversionrate, 1)) AS per_carton,
@@ -276,31 +248,85 @@ export async function fetchReferencingCommission(
        AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
      GROUP BY i.itemid`
   );
+}
 
-  const rfaByRef = new Map<string, RfaRateForCalc>();
-  for (const r of rfaRates ?? []) rfaByRef.set(r.reference.trim().toUpperCase(), r);
+/**
+ * Commission de référencement depuis le référentiel Supabase `rfa_rates`
+ * (source prioritaire depuis août 2026, onglet /rfa de l'app) — base
+ * "facturé uniquement" : lignes de factures liées aux commandes du mois.
+ * Par référence : colis facturés x rfa_par_colis (€/colis, Krousty/Lüks),
+ * sinon CA HT facturé x commission_pct (B&W/Pokawa). Même calcul que le
+ * fichier commissions xlsx (lib/commissionsXlsx.ts) — les deux totaux sont
+ * identiques par construction.
+ * Renvoie null si aucune référence facturée ne matche le référentiel.
+ */
+export async function fetchReferencingCommissionFromRfa(
+  parentId: number,
+  dateFrom: string,
+  dateTo: string,
+  rfaRates: { reference: string; rfa_par_colis: number | null; commission_pct: number | null }[]
+): Promise<number | null> {
+  if (!rfaRates || rfaRates.length === 0) return null;
+  const byRef = new Map(rfaRates.map((r) => [r.reference.trim().toUpperCase(), r]));
+  const rows = await fetchInvoicedByItem(parentId, dateFrom, dateTo);
+  let commission = 0;
+  let matched = false;
+  for (const row of rows) {
+    const rate = byRef.get(String(row.itemid).trim().toUpperCase());
+    if (!rate) continue;
+    const perCarton = Number(row.per_carton) > 0 ? Number(row.per_carton) : 1;
+    if (rate.rfa_par_colis !== null && rate.rfa_par_colis !== undefined) {
+      matched = true;
+      commission += ((Number(row.qty_pieces) || 0) / perCarton) * Number(rate.rfa_par_colis);
+    } else if (rate.commission_pct !== null && rate.commission_pct !== undefined) {
+      matched = true;
+      commission += (Number(row.total_ht) || 0) * Number(rate.commission_pct);
+    }
+  }
+  return matched ? Math.round(commission * 100) / 100 : null;
+}
 
+/**
+ * Commission de référencement = montants HT FACTURÉS par article (lignes de
+ * factures liées aux Sales Orders du mois) x taux par article (onglet
+ * "Commission" du Sheet client). Base "facturé uniquement" — règle métier
+ * confirmée par Nicolas (05/08/2026) : les commissions aux groupes sont dues
+ * sur ce qui a été facturé, pas sur les commandes passées. Une commande
+ * annulée ou pas encore facturée ne contribue donc pas ; une commande
+ * partiellement facturée contribue à hauteur du facturé.
+ * REPLI historique : utilisé seulement si le référentiel rfa_rates est vide
+ * pour ce client (voir fetchReferencingCommissionFromRfa ci-dessus).
+ * Renvoie null tant qu'aucun taux n'est configuré.
+ */
+export async function fetchReferencingCommission(
+  parentId: number,
+  dateFrom: string,
+  dateTo: string,
+  commissionRates: Record<string, number> | null | undefined
+): Promise<number | null> {
+  if (!commissionRates || Object.keys(commissionRates).length === 0) return null;
+  const toExcl = nextDay(dateTo);
+  const rows = await suiteql<{ itemid: string; total_ht: number }>(
+    `SELECT i.itemid AS itemid,
+            SUM(CASE WHEN til.taxline = 'F' AND til.mainline = 'F' THEN -til.foreignamount ELSE 0 END) AS total_ht
+     FROM transaction so
+     JOIN transactionline til ON til.createdfrom = so.id
+     JOIN transaction inv ON inv.id = til.transaction
+     JOIN item i ON i.id = til.item
+     WHERE so.type = 'SalesOrd'
+       AND inv.type = 'CustInvc'
+       AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+       AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+       AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
+     GROUP BY i.itemid`
+  );
   let commission = 0;
   let matched = false;
   for (const r of rows) {
-    const ref = String(r.itemid).trim().toUpperCase();
-    const ht = Number(r.total_ht) || 0;
-    const rfa = rfaByRef.get(ref);
-    if (rfa && rfa.rfa_par_colis !== null && rfa.rfa_par_colis !== undefined) {
-      const perCarton = Number(r.per_carton) > 0 ? Number(r.per_carton) : 1;
-      const colis = (Number(r.qty_pieces) || 0) / perCarton;
-      commission += colis * Number(rfa.rfa_par_colis);
+    const rate = commissionRates[String(r.itemid).toUpperCase()] ?? commissionRates[String(r.itemid)];
+    if (rate !== undefined) {
       matched = true;
-    } else if (rfa && rfa.commission_pct !== null && rfa.commission_pct !== undefined) {
-      commission += ht * Number(rfa.commission_pct);
-      matched = true;
-    } else {
-      const rate =
-        commissionRates?.[String(r.itemid).toUpperCase()] ?? commissionRates?.[String(r.itemid)];
-      if (rate !== undefined) {
-        commission += ht * Number(rate);
-        matched = true;
-      }
+      commission += Number(r.total_ht) * Number(rate);
     }
   }
   return matched ? Math.round(commission * 100) / 100 : null;
