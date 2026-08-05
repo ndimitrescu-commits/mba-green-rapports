@@ -20,14 +20,9 @@ import {
   fetchTransitByItem,
 } from "./netsuiteData";
 import { fetchFinancials, fetchReferencingCommission } from "./netsuiteFinancials";
-import { readRfaRatesForCalc } from "./rfaRates";
-import {
-  hasForecastTab,
-  readForecast,
-  readPrices,
-  readCommissions,
-  type ForecastRow,
-} from "./googleSheets";
+import { readRfaRatesForCalc, type RfaRate } from "./rfaRates";
+import { readForecastFromDb } from "./forecastsDb";
+import { type ForecastRow } from "./googleSheets";
 import type {
   ArticleItem,
   ClientConfig,
@@ -119,18 +114,13 @@ function dget<T = unknown>(obj: Record<string, unknown>, key: string, def: T): T
 }
 
 /**
- * Prévisions du client. Pour une enseigne sans onglet Prévisionnel dédié
- * (ex. Black & White), le repli hebdomadaire du Demand Planning est restreint
- * aux références du catalogue NetSuite de son niveau de prix (scopeRefs) —
- * sinon la colonne "Client" vide de Forecast_Client ferait tout remonter.
+ * Prévisions du client — lues dans la table Supabase `forecasts` (source de
+ * référence depuis août 2026, éditée via l'onglet /prevision de l'app). Le
+ * Google Sheet n'est plus consulté à la génération ; l'import initial se fait
+ * via /api/prevision/import.
  */
-async function readForecastForClient(
-  clientKey: string,
-  cfg: ClientConfig
-): Promise<ForecastRow[]> {
-  if (hasForecastTab(clientKey)) return readForecast(clientKey);
-  const catalog = await fetchCatalogPriceByCarton(cfg.netsuite_parent_id);
-  return readForecast(clientKey, new Set(catalog.keys()));
+async function readForecastForClient(clientKey: string): Promise<ForecastRow[]> {
+  return readForecastFromDb(clientKey);
 }
 
 interface ArticlesResult {
@@ -160,21 +150,28 @@ async function buildArticles(
   clientKey: string,
   cfg: ClientConfig,
   month: ParsedMonth,
-  forecastRows: ForecastRow[]
+  forecastRows: ForecastRow[],
+  rfaRates: RfaRate[] | null
 ): Promise<ArticlesResult> {
   // Prix unitaire carton, par ordre de priorité :
-  //  1. onglet "Prix" du Prévisionnel (saisie manuelle, si remplie) ;
+  //  1. prix restaurant du référentiel RFA (table Supabase rfa_rates, onglet
+  //     /rfa) — remplace l'ancien onglet "Prix" du Google Sheet ;
   //  2. prix catalogue NetSuite du niveau de prix du groupe client
   //     (ex. "Pokawa France") — le vrai tarif, y compris pour des références
   //     prévues mais pas facturées dans le mois ;
   //  3. prix moyen réalisé du mois (factures) en dernier recours.
   // "CA attendu" = prévisions × prix unitaire.
-  const [consumption, prices, catalogPrices, avgPrices] = await Promise.all([
+  const [consumption, catalogPrices, avgPrices] = await Promise.all([
     fetchConsumptionCartons(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
-    readPrices(clientKey),
     fetchCatalogPriceByCarton(cfg.netsuite_parent_id),
     fetchAvgPriceByCarton(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
   ]);
+  const prices = new Map<string, number>();
+  for (const r of rfaRates ?? []) {
+    if (r.prix_restaurant !== null && r.prix_restaurant !== undefined) {
+      prices.set(r.reference.trim(), Number(r.prix_restaurant));
+    }
+  }
 
   const forecastMap = new Map<string, number>();
   for (const row of forecastRows) {
@@ -335,23 +332,20 @@ export async function buildReportContext(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
-    readForecastForClient(clientKey, cfg),
-    // Repli historique (onglet "Commission" du Sheet) — les taux Supabase
-    // (table rfa_rates, onglet /rfa de l'app) sont prioritaires.
-    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
+  const [forecastRows, rfaRates] = await Promise.all([
+    readForecastForClient(clientKey),
     readRfaRatesForCalc(clientKey),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
-    buildArticles(clientKey, cfg, parsedMonth, forecastRows),
+    buildArticles(clientKey, cfg, parsedMonth, forecastRows, rfaRates),
     buildStockStatus(cfg, parsedMonth, forecastRows),
     fetchFinancials(cfg.netsuite_parent_id, parsedMonth.dateFrom, parsedMonth.dateTo),
     fetchReferencingCommission(
       cfg.netsuite_parent_id,
       parsedMonth.dateFrom,
       parsedMonth.dateTo,
-      commissionRates,
+      null,
       rfaRates
     ),
   ]);
@@ -492,23 +486,20 @@ export async function buildReportContextWithLogistics(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
-    readForecastForClient(clientKey, cfg),
-    // Repli historique (onglet "Commission" du Sheet) — les taux Supabase
-    // (table rfa_rates, onglet /rfa de l'app) sont prioritaires.
-    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
+  const [forecastRows, rfaRates] = await Promise.all([
+    readForecastForClient(clientKey),
     readRfaRatesForCalc(clientKey),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
-    buildArticles(clientKey, cfg, parsedMonth, forecastRows),
+    buildArticles(clientKey, cfg, parsedMonth, forecastRows, rfaRates),
     buildStockStatus(cfg, parsedMonth, forecastRows),
     fetchFinancials(cfg.netsuite_parent_id, parsedMonth.dateFrom, parsedMonth.dateTo),
     fetchReferencingCommission(
       cfg.netsuite_parent_id,
       parsedMonth.dateFrom,
       parsedMonth.dateTo,
-      commissionRates,
+      null,
       rfaRates
     ),
   ]);
