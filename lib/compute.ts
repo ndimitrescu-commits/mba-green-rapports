@@ -20,6 +20,7 @@ import {
   fetchTransitByItem,
 } from "./netsuiteData";
 import { fetchFinancials, fetchReferencingCommission } from "./netsuiteFinancials";
+import { readRfaRatesForCalc } from "./rfaRates";
 import {
   hasForecastTab,
   readForecast,
@@ -334,9 +335,12 @@ export async function buildReportContext(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  const [forecastRows, commissionRates] = await Promise.all([
+  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
     readForecastForClient(clientKey, cfg),
-    readCommissions(clientKey),
+    // Repli historique (onglet "Commission" du Sheet) — les taux Supabase
+    // (table rfa_rates, onglet /rfa de l'app) sont prioritaires.
+    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
+    readRfaRatesForCalc(clientKey),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
@@ -347,7 +351,8 @@ export async function buildReportContext(
       cfg.netsuite_parent_id,
       parsedMonth.dateFrom,
       parsedMonth.dateTo,
-      commissionRates
+      commissionRates,
+      rfaRates
     ),
   ]);
   const geodis = parsers.parseGeodis(files.geodis, cfg);
@@ -487,9 +492,12 @@ export async function buildReportContextWithLogistics(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  const [forecastRows, commissionRates] = await Promise.all([
+  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
     readForecastForClient(clientKey, cfg),
-    readCommissions(clientKey),
+    // Repli historique (onglet "Commission" du Sheet) — les taux Supabase
+    // (table rfa_rates, onglet /rfa de l'app) sont prioritaires.
+    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
+    readRfaRatesForCalc(clientKey),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
@@ -500,7 +508,8 @@ export async function buildReportContextWithLogistics(
       cfg.netsuite_parent_id,
       parsedMonth.dateFrom,
       parsedMonth.dateTo,
-      commissionRates
+      commissionRates,
+      rfaRates
     ),
   ]);
 

@@ -115,6 +115,9 @@ export default function HomePage() {
             <a href="/prevision" style={{ color: "#1B1F5E", fontSize: 14 }}>
               Prévisionnel →
             </a>
+            <a href="/rfa" style={{ color: "#1B1F5E", fontSize: 14 }}>
+              RFAs →
+            </a>
           </span>
         </div>
 

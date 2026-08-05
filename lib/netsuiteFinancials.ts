@@ -182,12 +182,22 @@ export async function fetchFinancials(
          AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
        GROUP BY t.terms, tm.name`
     ),
+    // "Nombre de commande" = commandes du mois FACTURÉES uniquement (au moins
+    // une ligne de facture liée). Exclut de fait les commandes annulées/closed
+    // et celles pas encore facturées — règle métier confirmée par Nicolas
+    // (05/08/2026) : les commissions aux groupes sont dues sur le facturé.
+    // Validé Krousty juillet 2026 : 146 (vs 151 commandes datées du mois,
+    // dont 2 annulées et 3 en attente de facturation au moment du calcul).
     suiteql<{ nb: number }>(
-      `SELECT COUNT(*) AS nb FROM transaction
-       WHERE type = 'SalesOrd'
-         AND trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
-         AND trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
-         AND entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})`
+      `SELECT COUNT(DISTINCT so.id) AS nb
+       FROM transaction so
+       JOIN transactionline til ON til.createdfrom = so.id
+       JOIN transaction inv ON inv.id = til.transaction
+       WHERE so.type = 'SalesOrd'
+         AND inv.type = 'CustInvc'
+         AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+         AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+         AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})`
     ),
   ]);
 
@@ -209,38 +219,88 @@ export async function fetchFinancials(
   };
 }
 
+/** Taux RFA minimal attendu par le calcul de commission (voir lib/rfaRates.ts). */
+export interface RfaRateForCalc {
+  reference: string;
+  rfa_par_colis: number | null;
+  commission_pct: number | null;
+}
+
 /**
- * Commission de référencement = quantités des Sales Orders du mois par article
- * x taux par article (fournis par l'onglet "Commission" du Sheet client).
+ * Commission de référencement, base "facturé uniquement" (règle métier
+ * confirmée par Nicolas, 05/08/2026 : les commissions aux groupes sont dues
+ * sur ce qui a été facturé). Pour chaque article, sur les lignes de factures
+ * liées aux Sales Orders du mois :
+ *  1. taux Supabase `rfa_par_colis` (€ / colis) : colis facturés x montant —
+ *     colis = pièces facturées / conversion carton (saleunit NetSuite) ;
+ *  2. sinon taux Supabase `commission_pct` : % x CA HT facturé ;
+ *  3. sinon taux de l'onglet "Commission" du Google Sheet (repli historique,
+ *     fraction x CA HT facturé).
+ * Une commande annulée ou pas encore facturée ne contribue pas ; une commande
+ * partiellement facturée contribue à hauteur du facturé.
  * Renvoie null tant qu'aucun taux n'est configuré.
  */
 export async function fetchReferencingCommission(
   parentId: number,
   dateFrom: string,
   dateTo: string,
-  commissionRates: Record<string, number> | null | undefined
+  commissionRates: Record<string, number> | null | undefined,
+  rfaRates?: RfaRateForCalc[] | null
 ): Promise<number | null> {
-  if (!commissionRates || Object.keys(commissionRates).length === 0) return null;
+  const hasSheet = !!commissionRates && Object.keys(commissionRates).length > 0;
+  const hasRfa = !!rfaRates && rfaRates.length > 0;
+  if (!hasSheet && !hasRfa) return null;
   const toExcl = nextDay(dateTo);
-  const rows = await suiteql<{ itemid: string; total_ht: number }>(
+  const rows = await suiteql<{
+    itemid: string;
+    qty_pieces: number;
+    per_carton: number | null;
+    total_ht: number;
+  }>(
     `SELECT i.itemid AS itemid,
-            SUM(CASE WHEN tl.taxline = 'F' AND tl.mainline = 'F' THEN -tl.foreignamount ELSE 0 END) AS total_ht
-     FROM transaction t
-     JOIN transactionline tl ON tl.transaction = t.id
-     JOIN item i ON i.id = tl.item
-     WHERE t.type = 'SalesOrd'
-       AND t.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
-       AND t.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
-       AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
+            SUM(-til.quantity) AS qty_pieces,
+            MAX(NVL(u.conversionrate, 1)) AS per_carton,
+            SUM(CASE WHEN til.taxline = 'F' AND til.mainline = 'F' THEN -til.foreignamount ELSE 0 END) AS total_ht
+     FROM transaction so
+     JOIN transactionline til ON til.createdfrom = so.id
+     JOIN transaction inv ON inv.id = til.transaction
+     JOIN item i ON i.id = til.item
+     LEFT JOIN unitstypeuom u
+       ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
+     WHERE so.type = 'SalesOrd'
+       AND inv.type = 'CustInvc'
+       AND til.mainline = 'F' AND til.taxline = 'F'
+       AND til.itemtype = 'InvtPart'
+       AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+       AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+       AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
      GROUP BY i.itemid`
   );
+
+  const rfaByRef = new Map<string, RfaRateForCalc>();
+  for (const r of rfaRates ?? []) rfaByRef.set(r.reference.trim().toUpperCase(), r);
+
   let commission = 0;
   let matched = false;
   for (const r of rows) {
-    const rate = commissionRates[String(r.itemid).toUpperCase()] ?? commissionRates[String(r.itemid)];
-    if (rate !== undefined) {
+    const ref = String(r.itemid).trim().toUpperCase();
+    const ht = Number(r.total_ht) || 0;
+    const rfa = rfaByRef.get(ref);
+    if (rfa && rfa.rfa_par_colis !== null && rfa.rfa_par_colis !== undefined) {
+      const perCarton = Number(r.per_carton) > 0 ? Number(r.per_carton) : 1;
+      const colis = (Number(r.qty_pieces) || 0) / perCarton;
+      commission += colis * Number(rfa.rfa_par_colis);
       matched = true;
-      commission += Number(r.total_ht) * Number(rate);
+    } else if (rfa && rfa.commission_pct !== null && rfa.commission_pct !== undefined) {
+      commission += ht * Number(rfa.commission_pct);
+      matched = true;
+    } else {
+      const rate =
+        commissionRates?.[String(r.itemid).toUpperCase()] ?? commissionRates?.[String(r.itemid)];
+      if (rate !== undefined) {
+        commission += ht * Number(rate);
+        matched = true;
+      }
     }
   }
   return matched ? Math.round(commission * 100) / 100 : null;
