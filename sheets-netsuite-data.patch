@@ -1,0 +1,353 @@
+diff --git a/lib/googleSheets.ts b/lib/googleSheets.ts
+index 57e208f..e603a08 100644
+--- a/lib/googleSheets.ts
++++ b/lib/googleSheets.ts
+@@ -1,18 +1,178 @@
++/**
++ * lib/googleSheets.ts
++ * ===================
++ * Lecture du classeur "MBA Green - Prévisionnel Clients" (Google Sheets) :
++ *   - un onglet par client (Pokawa, Krousty, Luks Kebab, La Kazdalerie) :
++ *     Référence | Mois (YYYY-MM) | Quantité (cartons) | MàJ le
++ *   - onglet "Prix"       : Client | Référence | Prix unitaire carton (€ HT) | MàJ le
++ *   - onglet "Commission" : Client | Référence | Commission % | MàJ le
++ *     (taux en fraction : 0.3 = 30 %)
++ *
++ * Auth : service account Google, clé JSON en base64 dans
++ * GOOGLE_SERVICE_ACCOUNT_KEY_B64 (déjà provisionnée sur Vercel).
++ * ⚠️ Le classeur doit être partagé (lecteur) avec le `client_email` du
++ * service account, sinon l'API renvoie 403 — l'erreur levée ici le rappelle.
++ *
++ * ID du classeur : PREVISIONNEL_SHEET_ID (env) avec repli sur l'ID connu.
++ */
++import { google, sheets_v4 } from "googleapis";
++
++const DEFAULT_SHEET_ID = "1fOrdej1AT9bVbf1-McY3Xtgnf_QPwnFuOekucQAvyog";
++
++/** Onglet du Prévisionnel pour chaque clé client de clients.json. */
++const CLIENT_TABS: Record<string, string> = {
++  POKAWA: "Pokawa",
++  KROUSTY: "Krousty",
++  LUKS_KEBAB: "Luks Kebab",
++  KAZDALERIE: "La Kazdalerie",
++};
++
+ export interface ForecastRow {
+   month: string;
+   reference: string;
+   quantity_cartons: number;
+ }
+ 
++function sheetId(): string {
++  return process.env.PREVISIONNEL_SHEET_ID || DEFAULT_SHEET_ID;
++}
++
++let cachedClient: { sheets: sheets_v4.Sheets; email: string } | null = null;
++
++function getSheetsClient(): { sheets: sheets_v4.Sheets; email: string } {
++  if (cachedClient) return cachedClient;
++  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64;
++  if (!b64) {
++    throw new Error(
++      "Variable d'environnement manquante : GOOGLE_SERVICE_ACCOUNT_KEY_B64 (clé JSON du service account Google en base64)."
++    );
++  }
++  let credentials: { client_email?: string };
++  try {
++    credentials = JSON.parse(Buffer.from(b64.trim(), "base64").toString("utf8"));
++  } catch {
++    throw new Error(
++      "GOOGLE_SERVICE_ACCOUNT_KEY_B64 illisible : la valeur doit être la clé JSON du service account encodée en base64."
++    );
++  }
++  const auth = new google.auth.GoogleAuth({
++    credentials: credentials as Record<string, string>,
++    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
++  });
++  cachedClient = {
++    sheets: google.sheets({ version: "v4", auth }),
++    email: credentials.client_email ?? "(client_email inconnu)",
++  };
++  return cachedClient;
++}
++
++/**
++ * Lit une plage et renvoie les lignes. Deux tolérances :
++ *  - valeurs non formatées (nombres JS, pas de séparateurs de milliers) ;
++ *  - lignes collées dans une seule cellule avec des tabulations (cas observé
++ *    sur l'en-tête de l'onglet "Prix") : re-découpées sur "\t".
++ */
++async function readRange(range: string): Promise<unknown[][]> {
++  const { sheets, email } = getSheetsClient();
++  try {
++    const res = await sheets.spreadsheets.values.get({
++      spreadsheetId: sheetId(),
++      range,
++      valueRenderOption: "UNFORMATTED_VALUE",
++    });
++    const rows = (res.data.values ?? []) as unknown[][];
++    return rows.map((row) =>
++      row.length === 1 && typeof row[0] === "string" && (row[0] as string).includes("\t")
++        ? (row[0] as string).split("\t")
++        : row
++    );
++  } catch (e: unknown) {
++    const err = e as { code?: number; message?: string };
++    if (err.code === 403 || err.code === 404) {
++      throw new Error(
++        `Google Sheets ${err.code} sur "${range}" : vérifier que le classeur Prévisionnel ` +
++          `(${sheetId()}) est partagé en lecteur avec ${email}.`
++      );
++    }
++    throw new Error(`Google Sheets — échec de lecture de "${range}" : ${err.message ?? String(e)}`);
++  }
++}
++
++/** "12,34" | "12.34" | 12.34 -> 12.34 ; sinon NaN. */
++function num(v: unknown): number {
++  if (typeof v === "number") return v;
++  if (typeof v === "string") return Number(v.replace(/\s/g, "").replace(",", "."));
++  return NaN;
++}
++
++function str(v: unknown): string {
++  return v === null || v === undefined ? "" : String(v).trim();
++}
++
++/** Ligne d'en-tête ou vide -> à ignorer. */
++function isHeaderOrEmpty(cells: string[]): boolean {
++  const first = (cells[0] ?? "").toLowerCase();
++  return cells.every((c) => c === "") || first === "client" || first === "référence" || first === "reference";
++}
++
++function tabForClient(clientKey: string): string {
++  const tab = CLIENT_TABS[clientKey];
++  if (!tab) {
++    throw new Error(
++      `Client '${clientKey}' sans onglet Prévisionnel connu (onglets configurés : ${Object.keys(CLIENT_TABS).join(", ")}).`
++    );
++  }
++  return tab;
++}
++
++/** Prévisions mensuelles (cartons) du client, tous mois présents dans l'onglet. */
+ export async function readForecast(clientKey: string): Promise<ForecastRow[]> {
+-  return [];
++  const rows = await readRange(`'${tabForClient(clientKey)}'!A1:C`);
++  const out: ForecastRow[] = [];
++  for (const raw of rows) {
++    const cells = raw.map(str);
++    if (isHeaderOrEmpty(cells)) continue;
++    const reference = cells[0];
++    const month = cells[1];
++    const qty = num(raw[2]);
++    if (!reference || !/^\d{4}-\d{2}$/.test(month) || !Number.isFinite(qty)) continue;
++    out.push({ reference, month, quantity_cartons: qty });
++  }
++  return out;
+ }
+ 
+-/** Prix unitaire par référence (onglet "Prix" du Prévisionnel). */
++/** Prix unitaire carton (€ HT) par référence (onglet "Prix" du Prévisionnel). */
+ export async function readPrices(clientKey: string): Promise<Map<string, number>> {
+-  return new Map();
++  const rows = await readRange(`'Prix'!A1:D`);
++  const prices = new Map<string, number>();
++  for (const raw of rows) {
++    const cells = raw.map(str);
++    if (isHeaderOrEmpty(cells)) continue;
++    if (cells[0].toUpperCase() !== clientKey.toUpperCase()) continue;
++    const reference = cells[1];
++    const price = num(raw[2]);
++    if (!reference || !Number.isFinite(price)) continue;
++    prices.set(reference, price);
++  }
++  return prices;
+ }
+ 
+-export async function readCommissions(clientKey: string): Promise<any> {
+-  return {};
++/**
++ * Taux de commission de référencement par référence (onglet "Commission",
++ * fraction : 0.3 = 30 %). Les taux à 0 sont conservés : une référence listée
++ * à 0 % participe au calcul (contribution nulle) au lieu d'être "sans taux".
++ */
++export async function readCommissions(clientKey: string): Promise<Record<string, number>> {
++  const rows = await readRange(`'Commission'!A1:D`);
++  const rates: Record<string, number> = {};
++  for (const raw of rows) {
++    const cells = raw.map(str);
++    if (isHeaderOrEmpty(cells)) continue;
++    if (cells[0].toUpperCase() !== clientKey.toUpperCase()) continue;
++    const reference = cells[1];
++    const rate = num(raw[2]);
++    if (!reference || !Number.isFinite(rate)) continue;
++    rates[reference] = rate;
++  }
++  return rates;
+ }
+diff --git a/lib/netsuiteData.ts b/lib/netsuiteData.ts
+index 8dc6a28..24040f6 100644
+--- a/lib/netsuiteData.ts
++++ b/lib/netsuiteData.ts
+@@ -1,20 +1,141 @@
+-/** Consommation par référence (cartons + pièces) sur la période. */
++/**
++ * lib/netsuiteData.ts
++ * ===================
++ * Données articles/stock/transit live depuis NetSuite (SuiteQL, même client
++ * TBA que lib/netsuiteFinancials.ts).
++ *
++ * Unités — règles validées sur le compte (03/08/2026, connecteur MCP) :
++ *  - `transactionline.quantity` et `inventoryitemlocations.quantityavailable`
++ *    sont toujours en UNITÉS DE BASE (pièces), quelle que soit l'unité saisie
++ *    sur la ligne.
++ *  - 1 carton = `unitstypeuom.conversionrate` pièces, via l'unité de vente de
++ *    l'article (`item.saleunit`, repli `item.stockunit`) — ex. WDFK02PO :
++ *    Pack (1000) → 214 000 pièces = 214 cartons (= rapport Février 2026) ;
++ *    BOT250PET62 : Pack (224) → 55 104 pièces = 246 cartons (= rapport).
++ *  - Périmètre articles : lignes d'articles stockés uniquement
++ *    (`itemtype = 'InvtPart'`) — exclut Shipping_, Escompte (2%), etc.
++ *    Février 2026 : 31 SKU, comme le rapport de référence.
++ */
++import { suiteql } from "./netsuiteFinancials";
++
++/** Échappe et assemble une liste de codes article pour un IN (...) SuiteQL. */
++function inList(itemCodes: string[]): string {
++  return itemCodes.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(", ");
++}
++
++/** Consommation par référence (cartons + pièces) sur la période (factures). */
+ export async function fetchConsumptionCartons(
+   parentId: number,
+   dateFrom: string,
+   dateTo: string
+ ): Promise<{ itemCode: string; description: string; qtyCartons: number; qtyPieces?: number }[]> {
+-  return [];
++  const toExcl = nextDay(dateTo);
++  const rows = await suiteql<{
++    itemcode: string;
++    description: string | null;
++    qty_pieces: number;
++    per_carton: number | null;
++  }>(
++    `SELECT i.itemid AS itemcode,
++            MAX(i.displayname) AS description,
++            SUM(-tl.quantity) AS qty_pieces,
++            MAX(NVL(u.conversionrate, 1)) AS per_carton
++     FROM transaction t
++     JOIN transactionline tl ON tl.transaction = t.id
++     JOIN item i ON i.id = tl.item
++     LEFT JOIN unitstypeuom u
++       ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
++     WHERE t.type = 'CustInvc'
++       AND tl.mainline = 'F' AND tl.taxline = 'F'
++       AND tl.itemtype = 'InvtPart'
++       AND t.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
++       AND t.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
++       AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
++     GROUP BY i.itemid`
++  );
++  return rows.map((r) => {
++    const pieces = Number(r.qty_pieces) || 0;
++    const perCarton = Number(r.per_carton) || 1;
++    return {
++      itemCode: String(r.itemcode),
++      description: r.description ?? "",
++      qtyCartons: Math.round(pieces / perCarton),
++      qtyPieces: pieces,
++    };
++  });
+ }
+ 
+-/** Stock disponible (cartons) par code article. */
++/** Stock disponible (cartons) par code article, toutes localisations. */
+ export async function fetchStockOnHand(itemCodes: string[]): Promise<Map<string, number>> {
+-  return new Map();
++  const out = new Map<string, number>();
++  if (itemCodes.length === 0) return out;
++  const rows = await suiteql<{ itemcode: string; qty_pieces: number | null; per_carton: number | null }>(
++    `SELECT i.itemid AS itemcode,
++            SUM(NVL(iil.quantityavailable, 0)) AS qty_pieces,
++            MAX(NVL(u.conversionrate, 1)) AS per_carton
++     FROM item i
++     LEFT JOIN inventoryitemlocations iil ON iil.item = i.id
++     LEFT JOIN unitstypeuom u
++       ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
++     WHERE i.itemid IN (${inList(itemCodes)})
++     GROUP BY i.itemid`
++  );
++  for (const r of rows) {
++    const perCarton = Number(r.per_carton) || 1;
++    out.set(String(r.itemcode), (Number(r.qty_pieces) || 0) / perCarton);
++  }
++  return out;
+ }
+ 
+-/** Lignes de PO en transit par code article (date d'échéance + qté cartons). */
++/**
++ * Lignes de PO en transit par code article (date d'échéance + qté cartons).
++ * "En transit" = reliquat non reçu (`quantity - quantityshiprecv > 0`) de PO
++ * dont la date de réception attendue est dans une fenêtre récente/proche
++ * (−90 j / +270 j) — écarte les vieilles lignes ouvertes jamais soldées, qui
++ * fausseraient le bucketing par numéro de semaine ISO fait dans compute.ts
++ * (le numéro de semaine ne porte pas l'année).
++ */
+ export async function fetchTransitByItem(
+   itemCodes: string[]
+ ): Promise<Map<string, { dueDate: string; qtyCartons: number }[]>> {
+-  return new Map();
++  const out = new Map<string, { dueDate: string; qtyCartons: number }[]>();
++  if (itemCodes.length === 0) return out;
++  const rows = await suiteql<{
++    itemcode: string;
++    due: string | null;
++    qty_pieces: number;
++    per_carton: number | null;
++  }>(
++    `SELECT i.itemid AS itemcode,
++            TO_CHAR(NVL(tl.expectedreceiptdate, t.duedate), 'YYYY-MM-DD') AS due,
++            SUM(tl.quantity - NVL(tl.quantityshiprecv, 0)) AS qty_pieces,
++            MAX(NVL(u.conversionrate, 1)) AS per_carton
++     FROM transaction t
++     JOIN transactionline tl ON tl.transaction = t.id
++     JOIN item i ON i.id = tl.item
++     LEFT JOIN unitstypeuom u
++       ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
++     WHERE t.type = 'PurchOrd'
++       AND tl.mainline = 'F'
++       AND tl.quantity - NVL(tl.quantityshiprecv, 0) > 0
++       AND NVL(tl.expectedreceiptdate, t.duedate) >= SYSDATE - 90
++       AND NVL(tl.expectedreceiptdate, t.duedate) <= SYSDATE + 270
++       AND i.itemid IN (${inList(itemCodes)})
++     GROUP BY i.itemid, TO_CHAR(NVL(tl.expectedreceiptdate, t.duedate), 'YYYY-MM-DD')`
++  );
++  for (const r of rows) {
++    if (!r.due) continue;
++    const perCarton = Number(r.per_carton) || 1;
++    const entry = { dueDate: r.due, qtyCartons: (Number(r.qty_pieces) || 0) / perCarton };
++    const list = out.get(String(r.itemcode));
++    if (list) list.push(entry);
++    else out.set(String(r.itemcode), [entry]);
++  }
++  return out;
++}
++
++function nextDay(isoDate: string): string {
++  const d = new Date(`${isoDate}T00:00:00Z`);
++  d.setUTCDate(d.getUTCDate() + 1);
++  return d.toISOString().slice(0, 10);
+ }
+diff --git a/lib/netsuiteFinancials.ts b/lib/netsuiteFinancials.ts
+index 6617b92..49b9eef 100644
+--- a/lib/netsuiteFinancials.ts
++++ b/lib/netsuiteFinancials.ts
+@@ -49,7 +49,7 @@ function pctEnc(s: string): string {
+   return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+ }
+ 
+-async function suiteql<T = Record<string, unknown>>(query: string): Promise<T[]> {
++export async function suiteql<T = Record<string, unknown>>(query: string): Promise<T[]> {
+   const account = env("NETSUITE_ACCOUNT_ID");
+   const consumerKey = env("NETSUITE_CONSUMER_KEY");
+   const consumerSecret = env("NETSUITE_CONSUMER_SECRET");

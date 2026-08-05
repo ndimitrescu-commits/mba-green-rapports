@@ -104,6 +104,26 @@ function parisParts(iso: string | null): { date: string; hour: number; dow: numb
   };
 }
 
+/**
+ * Heure de livraison GEODIS : le worker (backfill juillet 2026 + flux
+ * prospectif "recherche-envoi") ecrit l'heure LOCALE de livraison dans le
+ * champ horaire du timestamp, stocke en UTC (13:30 locale -> "13:30Z").
+ * Il faut donc lire l'horloge UTC SANS conversion de fuseau — une conversion
+ * Europe/Paris decalerait tout de +2 h (valide sur juillet 2026 : 81 % avant
+ * 12 h / 11 % / 7,5 %, moyenne ~10:25, coherent avec les heures GEODIS).
+ * Renvoie null si pas de timestamp ; hour = 0 pour les anciennes lignes a
+ * minuit (pas d'heure reelle).
+ */
+function utcClockParts(iso: string | null): { date: string; hour: number } | null {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return null;
+  return {
+    date: dt.toISOString().slice(0, 10),
+    hour: dt.getUTCHours() + dt.getUTCMinutes() / 60,
+  };
+}
+
 function isBusinessDay(dateStr: string, dow: number, holidays: Set<string>): boolean {
   return dow >= 1 && dow <= 5 && !holidays.has(dateStr);
 }
@@ -270,16 +290,22 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
       (Date.parse(del.date) - Date.parse(dep.date)) / 86400000
     );
     const crossedNonBusiness = calendarDays > bd;
-    if (bd <= 1 && (!crossedNonBusiness || del.hour <= 11)) ex24++;
+    // Regle "avant 11:00" : heure locale lue sur l'horloge UTC (meme
+    // convention de stockage que le respect horaires — voir utcClockParts).
+    const delHour = utcClockParts(r.date_livraison_reelle)?.hour ?? del.hour;
+    if (bd <= 1 && (!crossedNonBusiness || delHour <= 11)) ex24++;
   }
 
-  // Respect horaires : Messagerie France livrée, heure locale de livraison.
+  // Respect horaires : Messagerie France livrée, heure locale de livraison
+  // (lue sur l'horloge UTC — voir utcClockParts).
   const allHours = franceRows
-    .map((r) => parisParts(r.date_livraison_reelle))
-    .filter((p): p is NonNullable<ReturnType<typeof parisParts>> => p !== null);
-  // Le flux tracking GEODIS ne porte que des dates (minuit) : si aucune heure
-  // réelle n'est présente, le respect horaires n'est pas calculable.
-  const hasRealHours = allHours.some((p) => p.hour > 0.01);
+    .map((r) => utcClockParts(r.date_livraison_reelle))
+    .filter((p): p is NonNullable<ReturnType<typeof utcClockParts>> => p !== null)
+    .filter((p) => p.hour > 0.01);
+  // Les lignes sans heure réelle (anciens envois : timestamp à minuit) sont
+  // écartées ; si aucune ligne n'a d'heure, le respect horaires n'est pas
+  // calculable.
+  const hasRealHours = allHours.length > 0;
   const withHour = hasRealHours ? allHours : [];
   const before12 = withHour.filter((p) => p.hour <= 12).length;
   const before11 = withHour.filter((p) => p.hour <= 11).length;
