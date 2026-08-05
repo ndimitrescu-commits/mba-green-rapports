@@ -24,6 +24,8 @@ const MONTHS = [
 export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [withCommissions, setWithCommissions] = useState(true);
+  const [adminPassword, setAdminPassword] = useState("");
 
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -78,6 +80,41 @@ export default function HomePage() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+
+      // Fichier de commissions (xlsx) généré dans la foulée, sur les mêmes
+      // données (base facturée + taux RFAs) — cohérence garantie avec le PDF.
+      if (withCommissions) {
+        const clientKey = String(formData.get("client") ?? "");
+        const monthLabel = String(formData.get("month_label") ?? "");
+        const resX = await fetch(
+          `/api/commissions?client=${encodeURIComponent(clientKey)}&month_label=${encodeURIComponent(monthLabel)}`,
+          { headers: { "x-admin-password": adminPassword } }
+        );
+        if (!resX.ok) {
+          let msg = "Le rapport PDF est généré, mais le fichier commissions a échoué.";
+          try {
+            const dataX = await resX.json();
+            if (dataX?.error) msg += ` ${dataX.error}`;
+          } catch {}
+          setError(msg);
+        } else {
+          const blobX = await resX.blob();
+          let fnX = `Commissions ${monthLabel}.xlsx`;
+          const dispoX = resX.headers.get("Content-Disposition");
+          if (dispoX) {
+            const mX = dispoX.match(/filename="?([^"]+)"?/);
+            if (mX) fnX = mX[1];
+          }
+          const urlX = window.URL.createObjectURL(blobX);
+          const aX = document.createElement("a");
+          aX.href = urlX;
+          aX.download = fnX;
+          document.body.appendChild(aX);
+          aX.click();
+          aX.remove();
+          window.URL.revokeObjectURL(urlX);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -177,6 +214,31 @@ export default function HomePage() {
           <div style={hintStyle}>
             Prévisions, consommation, stock/transit, données financières et logistique GEODIS/GLS (Supabase) sont récupérés automatiquement — plus aucun fichier à importer.
           </div>
+
+          <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={withCommissions}
+              onChange={(e) => setWithCommissions(e.target.checked)}
+            />
+            Générer aussi le fichier commissions (xlsx)
+          </label>
+          {withCommissions && (
+            <>
+              <input
+                type="password"
+                placeholder="Mot de passe admin (onglets RFAs / Prévisionnel)"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                style={inputStyle}
+                required
+              />
+              <div style={hintStyle}>
+                Détail des factures du mois + commissions par référence (taux RFAs) — mêmes
+                chiffres que le rapport, base « facturé uniquement ».
+              </div>
+            </>
+          )}
 
           <button
             type="submit"
