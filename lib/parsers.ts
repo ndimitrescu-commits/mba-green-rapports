@@ -373,12 +373,14 @@ export function parseGeodis(buffer: ArrayBuffer, clientCfg: ClientConfig): Geodi
   });
 
   const names = clientCfg.restaurant_name_matches;
-  const aliases = new Set((clientCfg.restaurant_name_aliases || []).map((a) => a.toUpperCase()));
+  const aliases = new Set((clientCfg.restaurant_name_aliases || []).map((a) => normalizeRestaurantName(a)));
+  const normalizedNames = names.map((n) => normalizeRestaurantName(n));
 
   function isClientRow(row: unknown[]): boolean {
     const dest = String(row[idx["Nom du destinataire"]] ?? "");
-    if (aliases.has(dest.toUpperCase())) return true;
-    return names.some((n) => dest.toUpperCase().includes(n.toUpperCase()));
+    const normalized = normalizeRestaurantName(dest);
+    if (aliases.has(normalized)) return true;
+    return normalizedNames.some((n) => normalized.includes(n));
   }
 
   const clientRows = data.filter((r) => r && isClientRow(r));
@@ -509,6 +511,16 @@ export function parseGeodis(buffer: ArrayBuffer, clientCfg: ClientConfig): Geodi
     return round((onTime / messagerieFranceLivrees.length) * 100, 2);
   }
 
+  // Livraison "conforme" = avant 12h OU après 14h (exclut service de midi 12h-14h)
+  function respectHorairesConformes(): number | null {
+    if (!messagerieFranceLivrees.length || heureCol === undefined) return null;
+    const conforme = messagerieFranceLivrees.filter((r) => {
+      const mins = extractTimeMinutes(r[heureCol]);
+      return mins !== null && (mins < 12 * 60 || mins >= 14 * 60);
+    }).length;
+    return round((conforme / messagerieFranceLivrees.length) * 100, 2);
+  }
+
   // Express "livré en 24h" : confirmé par Nicolas -- doit se baser sur les
   // jours OUVRÉS (hors week-ends ET jours fériés français), pas sur l'écart
   // calendaire brut. 1 jour ouvré sans traversée de week-end/férié = 24h
@@ -561,6 +573,7 @@ export function parseGeodis(buffer: ArrayBuffer, clientCfg: ClientConfig): Geodi
     corner_wasabi_count: cornerWasabiCount,
     respect_horaires_12h: respectHoraires(12 * 60),
     respect_horaires_11h: respectHoraires(11 * 60),
+    respect_horaires_conformes: respectHorairesConformes(),
   };
 }
 
@@ -581,14 +594,15 @@ export function parseGls(buffer: ArrayBuffer, clientCfg: ClientConfig): GlsResul
   const paysCol = "Pays";
 
   const names = clientCfg.restaurant_name_matches;
-  const aliases = new Set((clientCfg.restaurant_name_aliases || []).map((a) => a.toUpperCase()));
+  const aliases = new Set((clientCfg.restaurant_name_aliases || []).map((a) => normalizeRestaurantName(a)));
+  const normalizedNames = names.map((n) => normalizeRestaurantName(n));
 
   const clientRows = (parsed.data || []).filter((row) => {
     const v = row[nameCol];
     if (v === undefined || v === null || v === "") return false;
-    const upper = v.toUpperCase();
-    if (aliases.has(upper)) return true;
-    return names.some((n) => upper.includes(n.toUpperCase()));
+    const normalized = normalizeRestaurantName(v);
+    if (aliases.has(normalized)) return true;
+    return normalizedNames.some((n) => normalized.includes(n));
   });
 
   let totalPoids = 0;
