@@ -113,6 +113,7 @@ export interface GeodisResult {
   total_palettes: number;
   total_poids: number;
   taux_reussite: number | null;
+  delay_buckets?: DelayBuckets;
   france: CountryStats;
   belgique_lux: CountryStats;
   /** Confirmed against the real GEODIS export: "Prestation" column names the
@@ -205,6 +206,7 @@ export interface ReportContext {
     total_commandes: number | null;
     total_cartons: number;
     taux_reussite: number | null;
+  delay_buckets?: DelayBuckets;
   };
   articles: ArticleItem[];
   stock_status: StockItem[];
