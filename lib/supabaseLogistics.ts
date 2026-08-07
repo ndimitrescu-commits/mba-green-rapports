@@ -384,6 +384,7 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
     corner_wasabi_count: [...names].filter((n) => n.includes("WASABI")).length,
     respect_horaires_12h: withHour.length > 0 ? round((before12 / withHour.length) * 100, 0) : null,
     respect_horaires_11h: withHour.length > 0 ? round((before11 / withHour.length) * 100, 2) : null,
+    respect_horaires_conformes: withHour.length > 0 ? round(((before12 + withHour.filter((p) => p.hour > 14).length) / withHour.length) * 100, 2) : null,
     horaires,
   };
 }
