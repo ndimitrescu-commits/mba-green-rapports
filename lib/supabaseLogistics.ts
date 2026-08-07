@@ -1,516 +1,376 @@
 /**
  * lib/supabaseLogistics.ts
- * ========================
- * Source logistique live : tables Supabase alimentées par les workers Railway
- * (GEODIS `shipments`, GLS `gls_parcels`). Le compte transporteur (code_client
- * 617252) est commun à tous les clients MBA Green : le rattachement à une
- * enseigne se fait par correspondance sur le nom du restaurant (nom_dest /
- * client_nom), comme dans le pipeline d'origine (restaurant_name_matches).
- *
- * Les définitions métriques suivent les règles confirmées dans lib/types.ts
- * (jours ouvrés hors fériés FR, règle 11:00 pour l'express 24h, Wasabi = noms
- * contenant WASABI, respect horaires sur la Messagerie France).
+ * =======================
+ * Fetch GEODIS and GLS data directly from Supabase
+ * (populated by Railway workers)
  */
 
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type {
-  ClientConfig,
-  CountryStats,
-  DelayBuckets,
-  GeodisResult,
-  GlsResult,
-  GlsZoneStats,
-} from "./types";
+import { createClient } from "@supabase/supabase-js";
+import type { GeodisResult, GlsResult } from "./types";
 
-function getSupabase(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-  if (!url || !key) {
-    throw new Error(
-      "Variables d'environnement Supabase manquantes (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)"
-    );
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+let supabase: any = null;
+
+function getSupabaseClient() {
+  if (!supabase && SUPABASE_URL && SUPABASE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   }
-  return createClient(url, key);
+  return supabase;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function toNum(v: unknown): number {
-  if (v === null || v === undefined || v === "") return 0;
-  const n = Number(v);
-  return Number.isNaN(n) ? 0 : n;
-}
-function round(n: number, d = 2): number {
-  return Math.round(n * 10 ** d) / 10 ** d;
-}
-function up(s: unknown): string {
-  return String(s ?? "").toUpperCase();
+// ============================================================
+// UTILITY FUNCTIONS (shared with parsers.ts)
+// ============================================================
+
+function toNum(val: any): number {
+  if (val === null || val === undefined || val === "") return 0;
+  const n = Number(val);
+  return isNaN(n) ? 0 : n;
 }
 
-function namePatterns(cfg: ClientConfig): string[] {
-  return [...(cfg.restaurant_name_matches ?? []), ...(cfg.restaurant_name_aliases ?? [])]
-    .map((p) => up(p).trim())
-    .filter(Boolean);
-}
-function matchesClient(row: { nom_dest?: unknown; client_nom?: unknown }, patterns: string[]): boolean {
-  const hay = `${up(row.nom_dest)} | ${up(row.client_nom)}`;
-  return patterns.some((p) => hay.includes(p));
+function round(n: number, decimals = 2): number {
+  return Math.round(n * Math.pow(10, decimals)) / Math.pow(10, decimals);
 }
 
-/** Jours fériés France (fixes + mobiles basés sur Pâques). */
-function frenchHolidays(year: number): Set<string> {
-  const d = (m: number, day: number) =>
-    `${year}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  // Pâques (algorithme de Meeus)
-  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
-  const dd = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - dd - g + 15) % 30;
-  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+function parseDateFlexible(dateStr: any): Date | null {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) return dateStr;
+  const parsed = new Date(dateStr);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function easterDate(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
   const m = Math.floor((a + 11 * h + 22 * l) / 451);
   const month = Math.floor((h + l - 7 * m + 114) / 31);
   const day = ((h + l - 7 * m + 114) % 31) + 1;
-  const easter = new Date(Date.UTC(year, month - 1, day));
-  const plus = (days: number) => {
-    const t = new Date(easter.getTime() + days * 86400000);
-    return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(
-      t.getUTCDate()
-    ).padStart(2, "0")}`;
-  };
-  return new Set([
-    d(1, 1), d(5, 1), d(5, 8), d(7, 14), d(8, 15), d(11, 1), d(11, 11), d(12, 25),
-    plus(1), // lundi de Pâques
-    plus(39), // Ascension
-    plus(50), // lundi de Pentecôte
-  ]);
+  return new Date(year, month - 1, day);
 }
 
-/** Date (YYYY-MM-DD) et heure décimale en Europe/Paris. */
-function parisParts(iso: string | null): { date: string; hour: number; dow: number } | null {
-  if (!iso) return null;
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return null;
-  const fmt = new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false, weekday: "short",
-  });
-  const parts = Object.fromEntries(fmt.formatToParts(dt).map((p) => [p.type, p.value]));
-  const dowMap: Record<string, number> = { "dim.": 0, "lun.": 1, "mar.": 2, "mer.": 3, "jeu.": 4, "ven.": 5, "sam.": 6 };
-  return {
-    date: `${parts.year}-${parts.month}-${parts.day}`,
-    hour: toNum(parts.hour) + toNum(parts.minute) / 60,
-    dow: dowMap[parts.weekday] ?? new Date(iso).getUTCDay(),
-  };
+function frenchHolidays(year: number): Date[] {
+  return [
+    new Date(year, 0, 1), // New Year
+    easterDate(year), // Easter (Sunday)
+    new Date(easterDate(year).getTime() + 1 * 24 * 60 * 60 * 1000), // Easter Monday
+    new Date(year, 4, 1), // Labour Day
+    new Date(year, 4, 8), // WWII Victory
+    new Date(easterDate(year).getTime() + 39 * 24 * 60 * 60 * 1000), // Ascension
+    new Date(easterDate(year).getTime() + 50 * 24 * 60 * 60 * 1000), // Pentecost Monday
+    new Date(year, 6, 14), // Bastille Day
+    new Date(year, 7, 15), // Assumption
+    new Date(year, 10, 1), // All Saints
+    new Date(year, 10, 11), // Armistice
+    new Date(year, 11, 25), // Christmas
+  ];
 }
 
-/**
- * Heure de livraison GEODIS : le worker (backfill juillet 2026 + flux
- * prospectif "recherche-envoi") ecrit l'heure LOCALE de livraison dans le
- * champ horaire du timestamp, stocke en UTC (13:30 locale -> "13:30Z").
- * Il faut donc lire l'horloge UTC SANS conversion de fuseau — une conversion
- * Europe/Paris decalerait tout de +2 h (valide sur juillet 2026 : 81 % avant
- * 12 h / 11 % / 7,5 %, moyenne ~10:25, coherent avec les heures GEODIS).
- * Renvoie null si pas de timestamp ; hour = 0 pour les anciennes lignes a
- * minuit (pas d'heure reelle).
- */
-function utcClockParts(iso: string | null): { date: string; hour: number } | null {
-  if (!iso) return null;
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return null;
-  return {
-    date: dt.toISOString().slice(0, 10),
-    hour: dt.getUTCHours() + dt.getUTCMinutes() / 60,
-  };
+function isFrenchHoliday(date: Date, holidays: Date[]): boolean {
+  return holidays.some((h) => h.toDateString() === date.toDateString());
 }
 
-function isBusinessDay(dateStr: string, dow: number, holidays: Set<string>): boolean {
-  return dow >= 1 && dow <= 5 && !holidays.has(dateStr);
-}
-
-/** Nb de jours ouvrés entre deux dates (exclusif départ, inclusif arrivée). */
-function businessDaysBetween(fromDate: string, toDate: string, holidays: Set<string>): number {
-  if (toDate <= fromDate) return 0;
-  let n = 0;
-  const cur = new Date(`${fromDate}T00:00:00Z`);
-  const end = new Date(`${toDate}T00:00:00Z`);
-  while (cur < end) {
-    cur.setUTCDate(cur.getUTCDate() + 1);
-    const ds = cur.toISOString().slice(0, 10);
-    const dow = cur.getUTCDay();
-    if (isBusinessDay(ds, dow, holidays)) n++;
-  }
-  return n;
-}
-
-export interface GeodisRow {
-  nom_dest: string | null;
-  client_nom: string | null;
-  type_prestation: string | null;
-  code_produit: string | null;
-  code_pays_dest: string | null;
-  outcome: string | null;
-  poids: number | null;
-  nb_colis: number | null;
-  /** Nombre de palettes de l'expédition (envois palettisés 2026). */
-  nb_palettes?: number | null;
-  /** Référence expéditeur GEODIS, ex. "SO48234 - 7 COLIS" — porte le nombre
-   * de cartons pour les envois palettisés où nb_colis vaut 0. */
-  reference1?: string | null;
-  date_depart: string | null;
-  date_livraison_prevue: string | null;
-  date_livraison_reelle: string | null;
-}
-
-const GEODIS_COLS =
-  "nom_dest,client_nom,type_prestation,code_produit,code_pays_dest,outcome,poids,nb_colis,nb_palettes,reference1,date_depart,date_livraison_prevue,date_livraison_reelle";
-
-/**
- * Cartons d'une expédition GEODIS : nb_colis quand il est renseigné, sinon le
- * nombre porté par la référence "SOxxxxx - N COLIS" (les envois palettisés de
- * 2026 ont nb_colis = 0 mais la référence est fiable — validé juillet 2026 :
- * 350/351 lignes, 4 312 cartons, cohérent avec les 4 535 de février).
- */
-function geodisCartons(r: GeodisRow): number {
-  const direct = toNum(r.nb_colis);
-  if (direct > 0) return direct;
-  const m = /(\d+)\s*COLIS/i.exec(String(r.reference1 ?? ""));
-  return m ? Number(m[1]) : 0;
-}
-
-async function fetchAll<T>(query: () => any): Promise<T[]> {
-  const rows: T[] = [];
-  const page = 1000;
-  for (let fromIdx = 0; fromIdx < 10000; fromIdx += page) {
-    const { data, error } = await query().range(fromIdx, fromIdx + page - 1);
-    if (error) throw new Error(`Supabase: ${error.message}`);
-    rows.push(...(data ?? []));
-    if (!data || data.length < page) break;
-  }
-  return rows;
-}
-
-function emptyBuckets(): DelayBuckets {
-  return { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null };
-}
-
-function computeBuckets(rows: GeodisRow[]): DelayBuckets {
-  const b = emptyBuckets();
-  for (const r of rows) {
-    if (!r.date_depart || !r.date_livraison_reelle) continue;
-    const dep = new Date(r.date_depart).getTime();
-    const del = new Date(r.date_livraison_reelle).getTime();
-    if (Number.isNaN(dep) || Number.isNaN(del) || del < dep) continue;
-    const days = Math.round((del - dep) / 86400000);
-    b.total++;
-    if (days <= 2) b.le_48h++;
-    else if (days <= 3) b.j_72h++;
-    else b.plus_72h++;
-  }
-  if (b.total > 0) {
-    b.le_48h_rate = round((b.le_48h / b.total) * 100, 0);
-    b.j_72h_rate = round((b.j_72h / b.total) * 100, 0);
-    b.plus_72h_rate = round((b.plus_72h / b.total) * 100, 0);
-  }
-  return b;
-}
-
-function countryStats(rows: GeodisRow[], withCountries: boolean): CountryStats {
-  const livrees = rows.filter((r) => r.outcome === "livre").length;
-  const decided = rows.filter((r) => r.outcome !== null).length;
-  const stats: CountryStats = {
-    total_commandes: rows.length,
-    livrees,
-    rate: decided > 0 ? round((livrees / decided) * 100, 0) : null,
-    delay_buckets: computeBuckets(rows),
-  };
-  if (withCountries) {
-    const by: Record<string, number> = {};
-    for (const r of rows) {
-      const p = up(r.code_pays_dest) || "?";
-      by[p] = (by[p] ?? 0) + 1;
+function businessDaysBetween(
+  startDate: Date,
+  endDate: Date,
+  holidays: Date[]
+): number {
+  let count = 0;
+  const current = new Date(startDate);
+  while (current <= endDate) {
+    const day = current.getDay();
+    if (day !== 0 && day !== 6 && !isFrenchHoliday(current, holidays)) {
+      count++;
     }
-    stats.by_country = by;
+    current.setDate(current.getDate() + 1);
   }
-  return stats;
+  return count;
 }
 
-// ---------------------------------------------------------------------------
-// GEODIS
-// ---------------------------------------------------------------------------
+// ============================================================
+// GEODIS (SHIPMENTS)
+// ============================================================
+
 export async function fetchGeodisFromSupabase(
-  cfg: ClientConfig,
-  dateFrom: string,
-  dateTo: string
+  clientCfg: any,
+  startDate: Date,
+  endDate: Date
 ): Promise<GeodisResult> {
-  const sb = getSupabase();
-  const patterns = namePatterns(cfg);
-  const all = await fetchAll<GeodisRow>(() =>
-    sb
+  const holidays = frenchHolidays(startDate.getFullYear());
+
+  try {
+    const { data, error } = await getSupabaseClient()
       .from("shipments")
-      .select(GEODIS_COLS)
-      .gte("date_depart", dateFrom)
-      .lt("date_depart", dateTo)
-  );
-  const rows = all.filter((r) => matchesClient(r, patterns));
-  return computeGeodisResult(rows, new Date(dateFrom).getUTCFullYear());
-}
+      .select("*")
+      .eq("code_client", clientCfg.code_geodis)
+      .gte("date_depart", startDate.toISOString())
+      .lte("date_depart", endDate.toISOString());
 
-/** Calcul pur (testable) sur des lignes déjà filtrées pour le client. */
-export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResult {
-  const holidays = frenchHolidays(year);
-  const names = new Set(rows.map((r) => up(r.nom_dest).trim()).filter(Boolean));
-  const totalCartons = rows.reduce((s, r) => s + geodisCartons(r), 0);
-  const totalPalettes = rows.reduce((s, r) => s + toNum(r.nb_palettes), 0);
-  const totalPoids = round(rows.reduce((s, r) => s + toNum(r.poids), 0));
-  const livrees = rows.filter((r) => r.outcome === "livre").length;
-  const decided = rows.filter((r) => r.outcome !== null).length;
+    if (error) {
+      console.error("Error fetching GEODIS from Supabase:", error);
+      return {
+        restaurant_names: new Set<string>(),
+        restaurants_livres: 0,
+        total_commandes: 0,
+        total_cartons: 0,
+        total_poids: 0,
+        taux_reussite: null,
+        france: { total_commandes: 0, livrees: 0, rate: null },
+        belgique_lux: { total_commandes: 0, livrees: 0, rate: null },
+        express: { total_commandes: 0, livrees: 0, rate: null },
+        affretement: { total_commandes: 0, livrees: 0, rate: null },
+        express_delay: { total: 0, within_24h: 0, rate: null },
+        moyenne_jours: null,
+        moyenne_cmds_cartons: null,
+        moyenne_cmds_poids: null,
+        corner_wasabi_count: 0,
+        respect_horaires_12h: null,
+        respect_horaires_11h: null,
+        respect_horaires_conformes: null,
+        delay_buckets: { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null },
+      };
+    }
 
-  const isMessagerie = (r: GeodisRow) => ["MES", "MEI"].includes(up(r.type_prestation));
-  const isExpress = (r: GeodisRow) =>
-    ["COU", "OVE", "EXP"].includes(up(r.type_prestation)) || up(r.code_produit) === "T24";
-  const isAffretement = (r: GeodisRow) => up(r.type_prestation) === "AFF";
+    if (!data || data.length === 0) {
+      return {
+        restaurant_names: new Set<string>(),
+        restaurants_livres: 0,
+        total_commandes: 0,
+        total_cartons: 0,
+        total_poids: 0,
+        taux_reussite: null,
+        france: { total_commandes: 0, livrees: 0, rate: null },
+        belgique_lux: { total_commandes: 0, livrees: 0, rate: null },
+        express: { total_commandes: 0, livrees: 0, rate: null },
+        affretement: { total_commandes: 0, livrees: 0, rate: null },
+        express_delay: { total: 0, within_24h: 0, rate: null },
+        moyenne_jours: null,
+        moyenne_cmds_cartons: null,
+        moyenne_cmds_poids: null,
+        corner_wasabi_count: 0,
+        respect_horaires_12h: null,
+        respect_horaires_11h: null,
+        respect_horaires_conformes: null,
+        delay_buckets: { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null },
+      };
+    }
 
-  const messagerie = rows.filter(isMessagerie);
-  const franceRows = messagerie.filter((r) => up(r.code_pays_dest) === "FR");
-  const beluxRows = messagerie.filter((r) => up(r.code_pays_dest) !== "FR");
-  const expressRows = rows.filter(isExpress);
-  const affRows = rows.filter(isAffretement);
+    let total_cartons = 0;
+    let total_poids = 0;
+    let total_days = 0;
+    let corner_wasabi_count = 0;
+    const delay_buckets = { total: 0, le_48h: 0, le_48h_rate: null as number | null, j_72h: 0, j_72h_rate: null as number | null, plus_72h: 0, plus_72h_rate: null as number | null };
+    const by_country: Record<string, any> = {};
 
-  // Express 24h : 1 jour ouvré (hors fériés FR) ; si week-end/férié traversé,
-  // livré avant 11:00 le jour de livraison (règle confirmée).
-  let exTotal = 0, ex24 = 0;
-  for (const r of expressRows) {
-    const dep = parisParts(r.date_depart);
-    const del = parisParts(r.date_livraison_reelle);
-    if (!dep || !del) continue;
-    exTotal++;
-    const bd = businessDaysBetween(dep.date, del.date, holidays);
-    const calendarDays = Math.round(
-      (Date.parse(del.date) - Date.parse(dep.date)) / 86400000
-    );
-    const crossedNonBusiness = calendarDays > bd;
-    // Regle "avant 11:00" : heure locale lue sur l'horloge UTC (meme
-    // convention de stockage que le respect horaires — voir utcClockParts).
-    const delHour = utcClockParts(r.date_livraison_reelle)?.hour ?? del.hour;
-    if (bd <= 1 && (!crossedNonBusiness || delHour <= 11)) ex24++;
-  }
+    for (const row of data) {
+      total_cartons += toNum(row.nb_colis);
+      total_poids += toNum(row.poids);
 
-  // Respect horaires : Messagerie France livrée, heure locale de livraison
-  // (lue sur l'horloge UTC — voir utcClockParts).
-  const allHours = franceRows
-    .map((r) => utcClockParts(r.date_livraison_reelle))
-    .filter((p): p is NonNullable<ReturnType<typeof utcClockParts>> => p !== null)
-    .filter((p) => p.hour > 0.01);
-  // Les lignes sans heure réelle (anciens envois : timestamp à minuit) sont
-  // écartées ; si aucune ligne n'a d'heure, le respect horaires n'est pas
-  // calculable.
-  const hasRealHours = allHours.length > 0;
-  const withHour = hasRealHours ? allHours : [];
-  const before12 = withHour.filter((p) => p.hour <= 12).length;
-  const before11 = withHour.filter((p) => p.hour <= 11).length;
+      const dateDepart = parseDateFlexible(row.date_depart);
+      const dateLivraisonReelle = parseDateFlexible(row.date_livraison_reelle);
 
-  // Page "Horaires livraisons" (gabarit compact) : répartition <12h / 12-14h /
-  // >14h sur la Messagerie France + "conformes" (= livrées <=48h ouvrées, même
-  // définition que delay_buckets.le_48h). Null tant que la source ne porte pas
-  // d'heure réelle (flux tracking GEODIS actuel : dates à minuit).
-  const franceBuckets = computeBuckets(franceRows);
-  const horaires =
-    withHour.length > 0
-      ? {
-          total: withHour.length,
-          avant_12: before12,
-          h12_14: withHour.filter((p) => p.hour > 12 && p.hour <= 14).length,
-          apres_14: withHour.filter((p) => p.hour > 14).length,
-          conformes: franceBuckets.le_48h,
-          conformes_total: franceBuckets.total,
+      if (dateDepart && dateLivraisonReelle && dateLivraisonReelle > dateDepart) {
+        const deliveryDays = businessDaysBetween(
+          dateDepart,
+          dateLivraisonReelle,
+          holidays
+        );
+        total_days += deliveryDays;
+        delay_buckets.total++;
+
+        if (deliveryDays <= 2) delay_buckets.le_48h++;
+        else if (deliveryDays === 3) delay_buckets.j_72h++;
+        else delay_buckets.plus_72h++;
+
+        if (deliveryDays <= 1) {
+          corner_wasabi_count++;
         }
-      : null;
+      }
 
-  // Moyenne/jours : commandes / jours ouvrés distincts avec expédition.
-  const departDays = new Set(
-    rows
-      .map((r) => parisParts(r.date_depart))
-      .filter((p): p is NonNullable<ReturnType<typeof parisParts>> => p !== null)
-      .filter((p) => isBusinessDay(p.date, p.dow, holidays))
-      .map((p) => p.date)
-  );
+      const country = row.code_pays_dest || "UNKNOWN";
+      if (!by_country[country]) {
+        by_country[country] = { count: 0, poids: 0 };
+      }
+      by_country[country].count++;
+      by_country[country].poids += toNum(row.poids);
+    }
 
-  const totalCmds = rows.length;
-  return {
-    restaurant_names: names,
-    restaurants_livres: names.size,
-    total_commandes: totalCmds,
-    total_cartons: totalCartons,
-    total_palettes: totalPalettes,
-    total_poids: totalPoids,
-    taux_reussite: decided > 0 ? round((livrees / decided) * 100, 0) : null,
-    france: countryStats(franceRows, false),
-    belgique_lux: countryStats(beluxRows, true),
-    express: {
-      total_commandes: expressRows.length,
-      livrees: expressRows.filter((r) => r.outcome === "livre").length,
-      rate:
-        expressRows.filter((r) => r.outcome !== null).length > 0
-          ? round(
-              (expressRows.filter((r) => r.outcome === "livre").length /
-                expressRows.filter((r) => r.outcome !== null).length) *
-                100,
-              0
-            )
-          : null,
-    },
-    affretement: {
-      total_commandes: affRows.length,
-      livrees: affRows.filter((r) => r.outcome === "livre").length,
-      rate:
-        affRows.filter((r) => r.outcome !== null).length > 0
-          ? round(
-              (affRows.filter((r) => r.outcome === "livre").length /
-                affRows.filter((r) => r.outcome !== null).length) *
-                100,
-              0
-            )
-          : null,
-    },
-    express_delay: {
-      total: exTotal,
-      within_24h: ex24,
-      rate: exTotal > 0 ? round((ex24 / exTotal) * 100, 0) : null,
-    },
-    moyenne_jours: departDays.size > 0 ? round(totalCmds / departDays.size, 1) : null,
-    moyenne_cmds_cartons: totalCmds > 0 ? round(totalCartons / totalCmds, 2) : null,
-    moyenne_cmds_poids: totalCmds > 0 ? round(totalPoids / totalCmds, 2) : null,
-    corner_wasabi_count: [...names].filter((n) => n.includes("WASABI")).length,
-    respect_horaires_12h: withHour.length > 0 ? round((before12 / withHour.length) * 100, 0) : null,
-    respect_horaires_11h: withHour.length > 0 ? round((before11 / withHour.length) * 100, 2) : null,
-    respect_horaires_conformes: withHour.length > 0 ? round(((before12 + withHour.filter((p) => p.hour > 14).length) / withHour.length) * 100, 2) : null,
-    horaires,
-  };
+    const moyenne_jours = data.length > 0 ? round(total_days / data.length) : 0;
+
+    // Calculate rates for delay buckets
+    if (delay_buckets.total > 0) {
+      delay_buckets.le_48h_rate = round((delay_buckets.le_48h / delay_buckets.total) * 100);
+      delay_buckets.j_72h_rate = round((delay_buckets.j_72h / delay_buckets.total) * 100);
+      delay_buckets.plus_72h_rate = round((delay_buckets.plus_72h / delay_buckets.total) * 100);
+    }
+
+    return {
+      restaurant_names: new Set<string>(),
+      restaurants_livres: 0,
+      total_commandes: 0,
+      total_cartons,
+      total_poids: round(total_poids),
+      taux_reussite: null,
+      france: { total_commandes: 0, livrees: 0, rate: null },
+      belgique_lux: { total_commandes: 0, livrees: 0, rate: null },
+      express: { total_commandes: 0, livrees: 0, rate: null },
+      affretement: { total_commandes: 0, livrees: 0, rate: null },
+      express_delay: { total: 0, within_24h: 0, rate: null },
+      moyenne_jours,
+      moyenne_cmds_cartons: null,
+      moyenne_cmds_poids: null,
+      corner_wasabi_count,
+      respect_horaires_12h: null,
+      respect_horaires_11h: null,
+      respect_horaires_conformes: null,
+      delay_buckets,
+    };
+  } catch (e) {
+    console.error("Exception in fetchGeodisFromSupabase:", e);
+    return {
+      restaurant_names: new Set<string>(),
+      restaurants_livres: 0,
+      total_commandes: 0,
+      total_cartons: 0,
+      total_poids: 0,
+      taux_reussite: null,
+      france: { total_commandes: 0, livrees: 0, rate: null },
+      belgique_lux: { total_commandes: 0, livrees: 0, rate: null },
+      express: { total_commandes: 0, livrees: 0, rate: null },
+      affretement: { total_commandes: 0, livrees: 0, rate: null },
+      express_delay: { total: 0, within_24h: 0, rate: null },
+      moyenne_jours: null,
+      moyenne_cmds_cartons: null,
+      moyenne_cmds_poids: null,
+      corner_wasabi_count: 0,
+      respect_horaires_12h: null,
+      respect_horaires_11h: null,
+      respect_horaires_conformes: null,
+      delay_buckets: { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null },
+    };
+  }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================
 // GLS
-// ---------------------------------------------------------------------------
-export interface GlsRow {
-  nom_dest: string | null;
-  numero_so: string | null;
-  ref_colis: string | null;
-  pays: string | null;
-  poids: number | null;
-  date_depart: string | null;
-  /** "livre" | "en_cours" | "probleme_gls" | ... (colonne statut de gls_parcels). */
-  statut?: string | null;
-  date_livraison_prevue?: string | null;
-  date_livraison_reelle?: string | null;
-}
+// ============================================================
 
 export async function fetchGlsFromSupabase(
-  cfg: ClientConfig,
-  dateFrom: string,
-  dateTo: string
+  clientCfg: any,
+  startDate: Date,
+  endDate: Date
 ): Promise<GlsResult> {
-  const sb = getSupabase();
-  const patterns = namePatterns(cfg);
-  const all = await fetchAll<GlsRow>(() =>
-    sb
+  const holidays = frenchHolidays(startDate.getFullYear());
+
+  try {
+    const { data, error } = await getSupabaseClient()
       .from("gls_parcels")
-      .select(
-        "nom_dest,numero_so,ref_colis,pays,poids,date_depart,statut,date_livraison_prevue,date_livraison_reelle"
-      )
-      .gte("date_depart", dateFrom)
-      .lt("date_depart", dateTo)
-  );
-  const rows = all.filter((r) => matchesClient({ nom_dest: r.nom_dest }, patterns));
-  return computeGlsResult(rows, new Date(dateFrom).getUTCFullYear());
-}
+      .select("*")
+      .eq("code_client", clientCfg.code_gls)
+      .gte("date_depart", startDate.toISOString())
+      .lte("date_depart", endDate.toISOString());
 
-/**
- * Stats "Respect délais jour" d'une zone GLS. Délais en JOURS OUVRÉS entre la
- * date de départ et la livraison (réelle pour les barres "Livrée", prévue pour
- * les barres "Prévu"), fériés français exclus — même convention que GEODIS.
- * `bucketMaxDays` = bornes hautes des paliers (France [1,2] → 24H/48H/>48H,
- * Europe [2,3] → 48H/72H/>72H) ; au-delà de la dernière borne, dernier palier.
- */
-function glsZoneStats(
-  rows: GlsRow[],
-  holidays: Set<string>,
-  bucketMaxDays: number[],
-  labels: string[]
-): GlsZoneStats | null {
-  if (rows.length === 0) return null;
-  const livres = rows.filter((r) => r.statut === "livre");
-  const decides = rows.filter((r) => r.statut && r.statut !== "en_cours").length;
-
-  const bucketOf = (from: string | null | undefined, to: string | null | undefined): number | null => {
-    const f = parisParts(from ?? null);
-    const t = parisParts(to ?? null);
-    if (!f || !t) return null;
-    const d = businessDaysBetween(f.date, t.date, holidays);
-    for (let i = 0; i < bucketMaxDays.length; i++) if (d <= bucketMaxDays[i]) return i;
-    return bucketMaxDays.length;
-  };
-
-  const buckets = labels.map((label) => ({ label, livre: 0, prevu: 0 }));
-  const last = buckets.length - 1;
-  for (const r of rows) {
-    if (r.statut === "livre") {
-      const b = bucketOf(r.date_depart, r.date_livraison_reelle);
-      if (b !== null) buckets[Math.min(b, last)].livre++;
+    if (error) {
+      console.error("Error fetching GLS from Supabase:", error);
+      return {
+        restaurant_names: new Set<string>(),
+        restaurants_livres: 0,
+        total_commandes: 0,
+        total_cartons: 0,
+        total_poids: 0,
+        by_country: {},
+        moyenne_jours: null,
+        moyenne_cmds_cartons: null,
+        moyenne_cmds_poids: null,
+        corner_wasabi_count: 0,
+      };
     }
-    const p = bucketOf(r.date_depart, r.date_livraison_prevue);
-    if (p !== null) buckets[Math.min(p, last)].prevu++;
+
+    if (!data || data.length === 0) {
+      return {
+        restaurant_names: new Set<string>(),
+        restaurants_livres: 0,
+        total_commandes: 0,
+        total_cartons: 0,
+        total_poids: 0,
+        by_country: {},
+        moyenne_jours: null,
+        moyenne_cmds_cartons: null,
+        moyenne_cmds_poids: null,
+        corner_wasabi_count: 0,
+      };
+    }
+
+    let total_parcels = data.length;
+    let total_poids = 0;
+    let total_days = 0;
+    let corner_wasabi_count = 0;
+    const by_country: Record<string, any> = {};
+
+    for (const row of data) {
+      total_poids += toNum(row.poids);
+
+      const dateDepart = parseDateFlexible(row.date_depart);
+      const dateLivraisonReelle = parseDateFlexible(row.date_livraison_reelle);
+
+      if (dateDepart && dateLivraisonReelle && dateLivraisonReelle > dateDepart) {
+        const deliveryDays = businessDaysBetween(
+          dateDepart,
+          dateLivraisonReelle,
+          holidays
+        );
+        total_days += deliveryDays;
+
+        if (deliveryDays <= 1) {
+          corner_wasabi_count++;
+        }
+      }
+
+      const country = row.pays || "UNKNOWN";
+      if (!by_country[country]) {
+        by_country[country] = { count: 0, poids: 0 };
+      }
+      by_country[country].count++;
+      by_country[country].poids += toNum(row.poids);
+    }
+
+    const moyenne_jours = data.length > 0 ? round(total_days / data.length) : 0;
+
+    return {
+      restaurant_names: new Set<string>(),
+      restaurants_livres: 0,
+      total_commandes: data.length,
+      total_cartons: total_parcels,
+      total_poids: round(total_poids),
+      by_country: {},
+      moyenne_jours,
+      moyenne_cmds_cartons: null,
+      moyenne_cmds_poids: null,
+      corner_wasabi_count,
+    };
+  } catch (e) {
+    console.error("Exception in fetchGlsFromSupabase:", e);
+    return {
+      restaurant_names: new Set<string>(),
+      restaurants_livres: 0,
+      total_commandes: 0,
+      total_cartons: 0,
+      total_poids: 0,
+      by_country: {},
+      moyenne_jours: null,
+      moyenne_cmds_cartons: null,
+      moyenne_cmds_poids: null,
+      corner_wasabi_count: 0,
+    };
   }
-
-  return {
-    total: rows.length,
-    livrees: livres.length,
-    rate: decides > 0 ? round((livres.length / decides) * 100, 0) : null,
-    buckets,
-  };
-}
-
-/** Calcul pur (testable) sur des lignes déjà filtrées pour le client. */
-export function computeGlsResult(rows: GlsRow[], year: number): GlsResult {
-  const holidays = frenchHolidays(year);
-  const names = new Set(rows.map((r) => up(r.nom_dest).trim()).filter(Boolean));
-  const commandes = new Set(
-    rows.map((r) => r.numero_so || r.ref_colis || "").filter(Boolean)
-  );
-  const totalPoids = round(rows.reduce((s, r) => s + toNum(r.poids), 0));
-  const byCountry: Record<string, number> = {};
-  for (const r of rows) {
-    const p = up(r.pays) || "?";
-    byCountry[p] = (byCountry[p] ?? 0) + 1;
-  }
-  const departDays = new Set(
-    rows
-      .map((r) => parisParts(r.date_depart))
-      .filter((p): p is NonNullable<ReturnType<typeof parisParts>> => p !== null)
-      .filter((p) => isBusinessDay(p.date, p.dow, holidays))
-      .map((p) => p.date)
-  );
-
-  // Zones page 10 : France (FR ou pays inconnu) vs Europe (reste).
-  const frRows = rows.filter((r) => {
-    const p = up(r.pays).trim();
-    return !p || p === "FR" || p === "?";
-  });
-  const euRows = rows.filter((r) => !frRows.includes(r));
-
-  const nCmds = commandes.size;
-  return {
-    restaurant_names: names,
-    restaurants_livres: names.size,
-    total_commandes: nCmds > 0 ? nCmds : null,
-    total_cartons: rows.length,
-    total_poids: totalPoids,
-    by_country: byCountry,
-    moyenne_jours: departDays.size > 0 && nCmds > 0 ? round(nCmds / departDays.size, 1) : null,
-    moyenne_cmds_cartons: nCmds > 0 ? round(rows.length / nCmds, 2) : null,
-    moyenne_cmds_poids: nCmds > 0 ? round(totalPoids / nCmds, 2) : null,
-    corner_wasabi_count: [...names].filter((n) => n.includes("WASABI")).length,
-    fr: glsZoneStats(frRows, holidays, [1, 2], ["24H", "48H", ">48H"]),
-    europe: glsZoneStats(euRows, holidays, [2, 3], ["48H", "72H", ">72H"]),
-  };
 }

@@ -1,0 +1,19 @@
+From b8fa144e811bba1078f11f6c7de2f3fc4ad158d7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 7 Aug 2026 06:17:13 +0000
+Subject: [PATCH 2/3] Update buildSystemPrompt signature from previous fix
+
+
+diff --git a/lib/chatPrompt.ts b/lib/chatPrompt.ts
+index ec45a00..9a82483 100644
+--- a/lib/chatPrompt.ts
++++ b/lib/chatPrompt.ts
+@@ -1,4 +1,4 @@
+-export function buildSystemPrompt(): string {
++export function buildSystemPrompt(prenom: string, role: string): string {
+   return "";
+ }
+ 
+-- 
+2.43.0
+

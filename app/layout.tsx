@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Rapport Mensuel Client",
-  description: "Génération de rapports mensuels clients",
+  description: "Générer les rapports mensuels clients",
 };
 
 export default function RootLayout({

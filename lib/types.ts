@@ -16,14 +16,6 @@ export interface ClientConfig {
    * record -- every restaurant is a sub-customer under it. Used to filter
    * consumption queries per client. See lib/netsuiteData.ts. */
   netsuite_parent_id: number;
-  /** Gabarit du rapport : "full" (12 pages, ex-Pokawa) ou "compact"
-   * (~8 pages, ex-Krousty / Black & White). Défaut : "full". */
-  template?: "full" | "compact";
-  /** 4e carte "Facteurs clés" du gabarit compact : "horaire12"
-   * (Livraison avant 12:00, Krousty) ou "taux" (Taux de réussite, défaut). */
-  kpi4?: "horaire12" | "taux";
-  /** Page "Horaires livraisons" (gabarit compact, Krousty uniquement). */
-  show_horaires?: boolean;
 }
 
 export type ClientsConfig = Record<string, ClientConfig>;
@@ -90,30 +82,13 @@ export interface ServiceStats {
   rate: number | null;
 }
 
-/** Répartition des heures de livraison Messagerie France (page "Horaires
- * livraisons" du gabarit compact). `conformes` = livraisons dans le délai
- * attendu (<=48h ouvrées, même définition que delay_buckets.le_48h). Null si
- * la source ne porte pas d'heure réelle de livraison (cas Supabase actuel :
- * date_livraison_reelle à minuit). */
-export interface HoraireStats {
-  total: number;
-  avant_12: number;
-  h12_14: number;
-  apres_14: number;
-  conformes: number;
-  conformes_total: number;
-}
-
 export interface GeodisResult {
   restaurant_names: Set<string>;
   restaurants_livres: number;
   total_commandes: number;
   total_cartons: number;
-  /** Somme des palettes (colonne nb_palettes de shipments). */
-  total_palettes: number;
   total_poids: number;
   taux_reussite: number | null;
-  delay_buckets?: DelayBuckets;
   france: CountryStats;
   belgique_lux: CountryStats;
   /** Confirmed against the real GEODIS export: "Prestation" column names the
@@ -146,8 +121,7 @@ export interface GeodisResult {
   /** Livraison "conforme" = avant 12h OU après 14h (exclut service de midi 12h-14h).
    * Confirmé avec Nicolas pour rapport Krousty. */
   respect_horaires_conformes: number | null;
-  /** Répartition horaires (gabarit compact) — null si pas d'heures réelles. */
-  horaires?: HoraireStats | null;
+  delay_buckets?: DelayBuckets;
 }
 
 export interface GlsResult {
@@ -165,23 +139,6 @@ export interface GlsResult {
   moyenne_cmds_cartons: number | null;
   moyenne_cmds_poids: number | null;
   corner_wasabi_count: number;
-  /** Stats de livraison par zone (page 10) — calculées depuis les colonnes
-   * statut / date_livraison_prevue / date_livraison_reelle de gls_parcels.
-   * Optionnelles : absentes si la source ne les fournit pas. */
-  fr?: GlsZoneStats | null;
-  europe?: GlsZoneStats | null;
-}
-
-/** Stats "Respect délais jour" d'une zone GLS (France ou Europe). */
-export interface GlsZoneStats {
-  total: number;
-  livrees: number;
-  /** % livrés parmi les colis au statut décidé (livré / problème) ;
-   * les colis encore en cours ne comptent pas au dénominateur. */
-  rate: number | null;
-  /** Barres du graphique : nb de colis livrés (réel) vs prévus par palier
-   * de délai en jours ouvrés (France 24H/48H/>48H, Europe 48H/72H/>72H). */
-  buckets: { label: string; livre: number; prevu: number }[];
 }
 
 export type FinancialsResult = Record<string, unknown>;
@@ -198,15 +155,12 @@ export interface ReportContext {
   kpi: {
     sku_count: number;
     pieces_consumed: number;
-    /** Cartons facturés du mois (somme des consommations articles). */
-    cartons_consumed?: number | null;
     ca_actual: number;
     ca_forecast: number;
     performance_rate: number | null;
     total_commandes: number | null;
     total_cartons: number;
     taux_reussite: number | null;
-  delay_buckets?: DelayBuckets;
   };
   articles: ArticleItem[];
   stock_status: StockItem[];
@@ -215,8 +169,6 @@ export interface ReportContext {
     corner_wasabi: number;
     total_commandes: number | null;
     total_cartons: number;
-    /** Palettes GEODIS (GLS n'en transporte pas) — gabarit compact. */
-    total_palettes?: number;
     total_poids: number;
     geodis_share: number | null;
     gls_share: number | null;

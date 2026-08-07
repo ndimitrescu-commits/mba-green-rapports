@@ -1,84 +1,128 @@
-import { NextResponse } from "next/server";
-import { buildReportContextWithLogistics, loadClientConfig, parseMonthLabel } from "@/lib/compute";
-import { fetchGeodisFromSupabase, fetchGlsFromSupabase } from "@/lib/supabaseLogistics";
+import { NextRequest, NextResponse } from "next/server";
+import { buildReportContextWithLogistics, getClientsConfig } from "@/lib/compute";
 import { buildReportData } from "@/lib/reportData";
 import { renderDesignReportPdf } from "@/lib/renderDesignPdf";
-import { contextFromJson } from "@/lib/contextJson";
-import type { ReportContext } from "@/lib/types";
+import { fetchGeodisFromSupabase, fetchGlsFromSupabase } from "@/lib/supabaseLogistics";
+import type { GeodisResult, GlsResult } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+// Generous serverless timeout for Puppeteer + Chromium cold start + PDF
+// rendering. Hobby plans on Vercel cap at 60s; Pro/Enterprise can go higher --
+// adjust maxDuration (and vercel.json) to match the deployed plan.
 export const maxDuration = 60;
 
-/**
- * POST /api/generate
- * FormData: { client, month_label, context? }
- * - Sans `context` : collecte complète des données (NetSuite, Sheets,
- *   Supabase) puis rendu — le flux historique du bouton de la page d'accueil.
- * - Avec `context` (JSON produit par /api/context, éventuellement retouché
- *   dans l'interface /preview) : rendu direct du contexte fourni, sans
- *   nouvelle collecte — ce que l'utilisateur a vu/édité est exactement ce
- *   qui est généré.
- * Retourne le PDF du rapport mensuel.
- */
-export async function POST(req: Request) {
-  let clientKey = "";
-  let monthLabel = "";
-  let contextJson = "";
+// "data_feb" (Prévisions/Consommation), "breakdown" (stock/transit) and
+// "financials" (Rapports Clients Mensuel) were all removed from here.
+// consumption + forecast come from NetSuite and the Prévisionnel Google
+// Sheet (lib/compute.ts's buildArticles()), stock/transit are a computed
+// weekly projection (buildStockStatus()), and CA H.T. / règlements /
+// nombre de commande now come live from NetSuite invoices and sales orders
+// (fetchFinancials() in lib/netsuiteFinancials.ts).
+//
+// GEODIS and GLS: now fetched from Supabase (where workers ingest them).
+// Files can still be uploaded as override/fallback (e.g., for testing,
+// backfill, or when Supabase is unavailable).
+
+export async function POST(request: NextRequest) {
   try {
-    const form = await req.formData();
-    clientKey = String(form.get("client") ?? "");
-    monthLabel = String(form.get("month_label") ?? "");
-    contextJson = String(form.get("context") ?? "");
-  } catch {
-    return NextResponse.json({ error: "Requête invalide (FormData attendu)." }, { status: 400 });
-  }
+    const formData = await request.formData();
 
-  if (!clientKey || !monthLabel) {
-    return NextResponse.json({ error: "Client et mois requis." }, { status: 400 });
-  }
+    const clientKey = String(formData.get("client") ?? "");
+    const monthLabel = String(formData.get("month_label") ?? "").trim();
 
-  try {
-    const cfg = loadClientConfig(clientKey);
-    let context: ReportContext;
-
-    if (contextJson) {
-      context = contextFromJson(contextJson);
-    } else {
-      const month = parseMonthLabel(monthLabel);
-      // Bornes ISO [from, to) — dateTo est le dernier jour du mois, on prend le jour suivant.
-      const from = `${month.dateFrom}T00:00:00Z`;
-      const toExclusive = new Date(new Date(`${month.dateTo}T00:00:00Z`).getTime() + 86400000)
-        .toISOString()
-        .slice(0, 10);
-
-      const [geodis, gls] = await Promise.all([
-        fetchGeodisFromSupabase(cfg, from, `${toExclusive}T00:00:00Z`),
-        fetchGlsFromSupabase(cfg, from, `${toExclusive}T00:00:00Z`),
-      ]);
-
-      context = await buildReportContextWithLogistics(clientKey, monthLabel, geodis, gls);
+    const clients = getClientsConfig();
+    const clientCfg = clients[clientKey];
+    if (!clientKey || !clientCfg) {
+      return NextResponse.json({ error: "Client inconnu." }, { status: 400 });
+    }
+    if (!monthLabel) {
+      return NextResponse.json(
+        { error: "Merci de renseigner le mois." },
+        { status: 400 }
+      );
     }
 
-    const data = buildReportData(context);
-    const pdfBytes = await renderDesignReportPdf(data);
+    // Parse month label to get date range
+    const [monthName, yearStr] = monthLabel.trim().split(/\s+/);
+    const year = parseInt(yearStr, 10);
+    const monthNum = getMonthNumber(monthName);
+    if (isNaN(year) || monthNum === -1) {
+      return NextResponse.json(
+        { error: "Format de mois invalide." },
+        { status: 400 }
+      );
+    }
+    const startDate = new Date(year, monthNum, 1);
+    const endDate = new Date(year, monthNum + 1, 0);
 
-    const safeMonth = monthLabel.replace(/\s+/g, "_");
-    const filename = `Rapport_${cfg.display_name}_${safeMonth}.pdf`;
+    // Read files (optional) or fetch from Supabase
+    let geodisResult: GeodisResult;
+    let glsResult: GlsResult;
 
-    return new NextResponse(Buffer.from(pdfBytes), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Cache-Control": "no-store",
-      },
-    });
-  } catch (e: any) {
-    console.error("Erreur génération rapport:", e);
+    const geodisFile = formData.get("geodis");
+    if (geodisFile instanceof File && geodisFile.size > 0) {
+      // File uploaded: use it
+      const buffer = await geodisFile.arrayBuffer();
+      const { parseGeodis } = await import("@/lib/parsers");
+      geodisResult = parseGeodis(buffer, clientCfg);
+    } else {
+      // No file: fetch from Supabase
+      geodisResult = await fetchGeodisFromSupabase(clientCfg, startDate, endDate);
+    }
+
+    const glsFile = formData.get("gls");
+    if (glsFile instanceof File && glsFile.size > 0) {
+      // File uploaded: use it
+      const buffer = await glsFile.arrayBuffer();
+      const { parseGls } = await import("@/lib/parsers");
+      glsResult = parseGls(buffer, clientCfg);
+    } else {
+      // No file: fetch from Supabase
+      glsResult = await fetchGlsFromSupabase(clientCfg, startDate, endDate);
+    }
+
+    try {
+      // Build context using parsed GEODIS/GLS data (from Supabase or files)
+      const context = await buildReportContextWithLogistics(
+        clientKey,
+        monthLabel,
+        geodisResult,
+        glsResult
+      );
+
+      const reportData = buildReportData(context);
+      const pdf = await renderDesignReportPdf(reportData);
+
+      const outName = `${clientKey}_${monthLabel.replace(/\s+/g, "_")}.pdf`;
+
+      return new NextResponse(new Uint8Array(pdf), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="${outName}"`,
+        },
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      return NextResponse.json(
+        { error: `Erreur pendant la génération : ${message}` },
+        { status: 500 }
+      );
+    }
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { error: e?.message || "Erreur pendant la génération." },
+      { error: `Erreur pendant la génération : ${message}` },
       { status: 500 }
     );
   }
+}
+
+// Helper: convert French month name to number (0-11)
+function getMonthNumber(monthName: string): number {
+  const months: Record<string, number> = {
+    janvier: 0, février: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+    juillet: 6, août: 7, septembre: 8, octobre: 9, novembre: 10, décembre: 11,
+  };
+  return months[monthName.toLowerCase()] ?? -1;
 }
