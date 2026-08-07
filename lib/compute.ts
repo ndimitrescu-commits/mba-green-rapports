@@ -12,9 +12,27 @@
  */
 import clientsConfig from "./clients.json";
 import * as parsers from "./parsers";
-import { fetchConsumptionCartons, fetchStockOnHand, fetchTransitByItem } from "./netsuiteData";
-import { fetchFinancials, fetchReferencingCommission } from "./netsuiteFinancials";
-import { readForecast, readPrices, readCommissions, type ForecastRow } from "./googleSheets";
+import {
+  fetchAvgPriceByCarton,
+  fetchCatalogPriceByCarton,
+  fetchConsumptionCartons,
+  fetchStockOnHand,
+  fetchTransitByItem,
+} from "./netsuiteData";
+import {
+  fetchFinancials,
+  fetchReferencingCommission,
+  fetchReferencingCommissionFromRfa,
+} from "./netsuiteFinancials";
+import { readForecastFromDb } from "./forecastsDb";
+import { readRfaRatesForCalc } from "./rfaRates";
+import {
+  hasForecastTab,
+  readForecast,
+  readPrices,
+  readCommissions,
+  type ForecastRow,
+} from "./googleSheets";
 import type {
   ArticleItem,
   ClientConfig,
@@ -105,10 +123,60 @@ function dget<T = unknown>(obj: Record<string, unknown>, key: string, def: T): T
   return key in obj && obj[key] !== undefined ? (obj[key] as T) : def;
 }
 
+/**
+ * Robustesse : une source de données en panne (NetSuite indisponible, clé
+ * Google absente, table Supabase vide...) ne doit JAMAIS empêcher la
+ * génération du rapport. On log l'erreur et on continue avec une valeur de
+ * repli — la section concernée affichera "-" au lieu de faire tomber tout le
+ * PDF en erreur 500.
+ */
+async function safe<T>(label: string, p: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await p;
+  } catch (e) {
+    console.error(`[rapport] Source "${label}" indisponible — repli appliqué :`, e);
+    return fallback;
+  }
+}
+
+const EMPTY_FINANCIALS = { caHtTotal: null, salesOrderCount: null, caHtByLabel: {} };
+
+/**
+ * Prévisions du client. Pour une enseigne sans onglet Prévisionnel dédié
+ * (ex. Black & White), le repli hebdomadaire du Demand Planning est restreint
+ * aux références du catalogue NetSuite de son niveau de prix (scopeRefs) —
+ * sinon la colonne "Client" vide de Forecast_Client ferait tout remonter.
+ */
+async function readForecastForClient(
+  clientKey: string,
+  cfg: ClientConfig
+): Promise<ForecastRow[]> {
+  if (hasForecastTab(clientKey)) return readForecast(clientKey);
+  const catalog = await fetchCatalogPriceByCarton(cfg.netsuite_parent_id);
+  return readForecast(clientKey, new Set(catalog.keys()));
+}
+
+/**
+ * Source des prévisions : table Supabase `forecasts` (onglet /prevision de
+ * l'app — source de référence depuis août 2026), avec repli sur l'ancienne
+ * chaîne Google Sheets (Prévisionnel + Forecast_Client) si la table est vide
+ * pour ce client ou si la clé service n'est pas configurée.
+ */
+async function readForecastRows(clientKey: string, cfg: ClientConfig): Promise<ForecastRow[]> {
+  try {
+    const db = await readForecastFromDb(clientKey);
+    if (db.length > 0) return db;
+  } catch {
+    // clé service absente ou table indisponible -> repli Sheets
+  }
+  return readForecastForClient(clientKey, cfg);
+}
+
 interface ArticlesResult {
   items: ArticleItem[];
   sku_count: number;
   total_cartons_consumed: number;
+  total_pieces_consumed: number;
   ca_forecast: number;
 }
 
@@ -133,9 +201,30 @@ async function buildArticles(
   month: ParsedMonth,
   forecastRows: ForecastRow[]
 ): Promise<ArticlesResult> {
-  const [consumption, prices] = await Promise.all([
-    fetchConsumptionCartons(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
-    readPrices(clientKey),
+  // Prix unitaire carton, par ordre de priorité :
+  //  1. onglet "Prix" du Prévisionnel (saisie manuelle, si remplie) ;
+  //  2. prix catalogue NetSuite du niveau de prix du groupe client
+  //     (ex. "Pokawa France") — le vrai tarif, y compris pour des références
+  //     prévues mais pas facturées dans le mois ;
+  //  3. prix moyen réalisé du mois (factures) en dernier recours.
+  // "CA attendu" = prévisions × prix unitaire.
+  const [consumption, prices, catalogPrices, avgPrices] = await Promise.all([
+    safe(
+      "NetSuite consommation",
+      fetchConsumptionCartons(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
+      [] as Awaited<ReturnType<typeof fetchConsumptionCartons>>
+    ),
+    safe("Sheets prix", readPrices(clientKey), new Map<string, number>()),
+    safe(
+      "NetSuite prix catalogue",
+      fetchCatalogPriceByCarton(cfg.netsuite_parent_id),
+      new Map<string, number>()
+    ),
+    safe(
+      "NetSuite prix moyen",
+      fetchAvgPriceByCarton(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
+      new Map<string, number>()
+    ),
   ]);
 
   const forecastMap = new Map<string, number>();
@@ -144,8 +233,10 @@ async function buildArticles(
   }
 
   const consumptionMap = new Map<string, { description: string; qty: number }>();
+  let totalPieces = 0;
   for (const row of consumption) {
     consumptionMap.set(row.itemCode, { description: row.description, qty: row.qtyCartons });
+    totalPieces += Number(row.qtyPieces) || 0;
   }
 
   const allCodes = new Set<string>([...forecastMap.keys(), ...consumptionMap.keys()]);
@@ -158,7 +249,7 @@ async function buildArticles(
     const forecastCartons = forecastMap.get(code) ?? 0;
     const cons = consumptionMap.get(code);
     const consCartons = cons?.qty ?? 0;
-    const price = prices[code] ?? 0;
+    const price = prices.get(code) ?? catalogPrices.get(code) ?? avgPrices.get(code) ?? 0;
     const rate = forecastCartons ? Math.round((consCartons / forecastCartons) * 100) : null;
 
     items.push({
@@ -181,6 +272,7 @@ async function buildArticles(
     items,
     sku_count: items.length,
     total_cartons_consumed: totalCons,
+    total_pieces_consumed: totalPieces,
     ca_forecast: Math.round(totalCaPrev * 100) / 100,
   };
 }
@@ -233,7 +325,7 @@ function weeksInMonth(month: ParsedMonth): number[] {
 }
 
 async function buildStockStatus(
-  _cfg: ClientConfig,
+  cfg: ClientConfig,
   month: ParsedMonth,
   forecastRows: ForecastRow[],
   maxItems = 6
@@ -251,8 +343,12 @@ async function buildStockStatus(
   if (topCodes.length === 0) return [];
 
   const [onHandMap, transitMap] = await Promise.all([
-    fetchStockOnHand(topCodes),
-    fetchTransitByItem(topCodes),
+    safe("NetSuite stock disponible", fetchStockOnHand(topCodes), new Map<string, number>()),
+    safe(
+      "NetSuite transit",
+      fetchTransitByItem(topCodes),
+      new Map() as Awaited<ReturnType<typeof fetchTransitByItem>>
+    ),
   ]);
 
   const weeks = weeksInMonth(month);
@@ -294,16 +390,40 @@ export async function buildReportContext(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  const [forecastRows] = await Promise.all([
-    readForecast(clientKey),
-    readCommissions(clientKey),
+  // Taux RFA (Supabase, prioritaire) + onglet Commission du Sheet (repli).
+  // L'échec de l'un ne bloque pas la génération : commission à "-" plutôt
+  // qu'un rapport en erreur.
+  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
+    safe("Prévisions (Supabase/Sheets)", readForecastRows(clientKey, cfg), [] as ForecastRow[]),
+    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
+    safe("Taux RFA (Supabase)", readRfaRatesForCalc(clientKey), null),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
     buildArticles(clientKey, cfg, parsedMonth, forecastRows),
-    buildStockStatus(cfg, parsedMonth, forecastRows),
-    fetchFinancials(clientKey, monthLabel),
-    fetchReferencingCommission(clientKey),
+    safe("Projection stock", buildStockStatus(cfg, parsedMonth, forecastRows), [] as StockItem[]),
+    safe(
+      "NetSuite financier",
+      fetchFinancials(cfg.netsuite_parent_id, parsedMonth.dateFrom, parsedMonth.dateTo),
+      EMPTY_FINANCIALS
+    ),
+    safe(
+      "Commission référencement",
+      rfaRates && rfaRates.length > 0
+        ? fetchReferencingCommissionFromRfa(
+            cfg.netsuite_parent_id,
+            parsedMonth.dateFrom,
+            parsedMonth.dateTo,
+            rfaRates
+          )
+        : fetchReferencingCommission(
+            cfg.netsuite_parent_id,
+            parsedMonth.dateFrom,
+            parsedMonth.dateTo,
+            commissionRates
+          ),
+      null
+    ),
   ]);
   const geodis = parsers.parseGeodis(files.geodis, cfg);
   const gls = parsers.parseGls(files.gls, cfg);
@@ -388,6 +508,7 @@ export async function buildReportContext(
       // mapping, but the number/unit shown on page 1 changes as a result.
       // Flagged explicitly to Nicolas, not a silent change.
       pieces_consumed: Math.trunc(articles.total_cartons_consumed),
+      cartons_consumed: Math.round(articles.total_cartons_consumed),
       ca_actual: Number(caActual),
       ca_forecast: articles.ca_forecast,
       performance_rate: performanceRate,
@@ -402,6 +523,7 @@ export async function buildReportContext(
       corner_wasabi: totalCornerWasabi,
       total_commandes: orderCountTotal,
       total_cartons: totalCartons,
+      total_palettes: geodis.total_palettes ?? 0,
       total_poids: totalPoids,
       geodis_share: geodisShare,
       gls_share: glsShare,
@@ -440,16 +562,40 @@ export async function buildReportContextWithLogistics(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  const [forecastRows] = await Promise.all([
-    readForecast(clientKey),
-    readCommissions(clientKey),
+  // Taux RFA (Supabase, prioritaire) + onglet Commission du Sheet (repli).
+  // L'échec de l'un ne bloque pas la génération : commission à "-" plutôt
+  // qu'un rapport en erreur.
+  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
+    safe("Prévisions (Supabase/Sheets)", readForecastRows(clientKey, cfg), [] as ForecastRow[]),
+    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
+    safe("Taux RFA (Supabase)", readRfaRatesForCalc(clientKey), null),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
     buildArticles(clientKey, cfg, parsedMonth, forecastRows),
-    buildStockStatus(cfg, parsedMonth, forecastRows),
-    fetchFinancials(clientKey, monthLabel),
-    fetchReferencingCommission(clientKey),
+    safe("Projection stock", buildStockStatus(cfg, parsedMonth, forecastRows), [] as StockItem[]),
+    safe(
+      "NetSuite financier",
+      fetchFinancials(cfg.netsuite_parent_id, parsedMonth.dateFrom, parsedMonth.dateTo),
+      EMPTY_FINANCIALS
+    ),
+    safe(
+      "Commission référencement",
+      rfaRates && rfaRates.length > 0
+        ? fetchReferencingCommissionFromRfa(
+            cfg.netsuite_parent_id,
+            parsedMonth.dateFrom,
+            parsedMonth.dateTo,
+            rfaRates
+          )
+        : fetchReferencingCommission(
+            cfg.netsuite_parent_id,
+            parsedMonth.dateFrom,
+            parsedMonth.dateTo,
+            commissionRates
+          ),
+      null
+    ),
   ]);
 
   // Use pre-parsed results instead of parsing from buffers
@@ -504,7 +650,8 @@ export async function buildReportContextWithLogistics(
     month_label: monthLabel,
     kpi: {
       sku_count: articles.sku_count,
-      pieces_consumed: articles.total_cartons_consumed,
+      pieces_consumed: articles.total_pieces_consumed,
+      cartons_consumed: Math.round(articles.total_cartons_consumed),
       ca_actual: caActual,
       ca_forecast: articles.ca_forecast,
       performance_rate: performanceRate,
@@ -519,6 +666,7 @@ export async function buildReportContextWithLogistics(
       corner_wasabi: totalCornerWasabi,
       total_commandes: orderCountTotal,
       total_cartons: totalCartons,
+      total_palettes: geodis.total_palettes ?? 0,
       total_poids: totalPoids,
       geodis_share: geodisShare,
       gls_share: glsShare,
@@ -527,12 +675,15 @@ export async function buildReportContextWithLogistics(
     },
     financials: {
       ca_total: dget(fin, "Chiffre d'Affaires H.T.", null),
-      reglement_livraison: dget(fin, "Règlements/Livraison", null),
-      reglement_commande: dget(fin, "Règlements/Commande", null),
-      reglement_30_classique: dget(fin, "Règlements/Net 30 Classique", null),
-      reglement_escompte_2: dget(fin, "Règlements/Escompte 2%", null),
-      reglement_30_sepa: dget(fin, "Règlements/Net 30 SEPA", null),
-      reglement_45_sepa: dget(fin, "Règlements/Net 45 SEPA", null),
+      // Clés alignées sur TERM_LABELS (lib/netsuiteFinancials.ts) — mêmes
+      // libellés que dans buildReportContext() plus haut. Les anciennes clés
+      // "Règlements/..." ne matchaient jamais caHtByLabel → cartes p.11 à "-".
+      reglement_livraison: dget(fin, "Règlement à la livraison", null),
+      reglement_commande: dget(fin, "Règlement à la commande", null),
+      reglement_30_classique: dget(fin, "Règlement net 30 jours (classique)", null),
+      reglement_escompte_2: dget(fin, "Règlement escompte 2% (SEPA)", null),
+      reglement_30_sepa: dget(fin, "Règlement net 30 jours (SEPA)", null),
+      reglement_45_sepa: dget(fin, "Règlement net 45 jours (SEPA)", null),
       commissions: dget(fin, "RFAs / Commissions", null),
       commissions_pkg: dget(fin, "RFAs / Commissions PGK", null),
       nombre_commande: dget(fin, "Nombre de commande", null),

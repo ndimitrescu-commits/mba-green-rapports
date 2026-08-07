@@ -90,7 +90,7 @@ const ctx: ReportContext = {
       affretement: { total_commandes: 0, livrees: 0, rate: null },
       express_delay: { total: 20, within_24h: 19, rate: 95 },
       moyenne_jours: 12.6, moyenne_cmds_cartons: 10.77, moyenne_cmds_poids: 97.99,
-      corner_wasabi_count: 0, respect_horaires_12h: 84, respect_horaires_11h: 68.89,
+      corner_wasabi_count: 0, respect_horaires_12h: 84, respect_horaires_11h: 68.89, respect_horaires_conformes: 81.6,
     },
     gls: {
       restaurant_names: new Set(), restaurants_livres: 77, total_commandes: 275,
