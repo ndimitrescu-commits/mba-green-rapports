@@ -15,3 +15,7 @@ export async function readPrices(_clientKey: string): Promise<Record<string, num
 export async function readCommissions(_clientKey: string): Promise<any> {
   return {};
 }
+
+export function hasForecastTab(): boolean {
+  return false;
+}

@@ -21,3 +21,7 @@ export async function fetchTransitByItem(codes: string[]): Promise<Map<string, a
   }
   return result;
 }
+
+export async function fetchCatalogPriceByCarton(_codes: string[]): Promise<Record<string, number>> {
+  return {};
+}
