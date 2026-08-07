@@ -106,6 +106,7 @@ function makeCtx(clientKey: "KROUSTY" | "BLACK_WHITE"): ReportContext {
         corner_wasabi_count: 0,
         respect_horaires_12h: kr ? 69 : null,
         respect_horaires_11h: null,
+        respect_horaires_conformes: kr ? 87.61 : null,
         horaires: kr
           ? { total: 113, avant_12: 78, h12_14: 14, apres_14: 21, conformes: 99, conformes_total: 113 }
           : null,
