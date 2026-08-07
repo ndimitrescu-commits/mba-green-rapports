@@ -223,5 +223,6 @@ export async function renderDesignReportPdf(data: ReportData): Promise<ArrayBuff
 
   addPageNumber(currentPage, 3, 3);
 
-  return await pdfDoc.save();
+  const bytes = await pdfDoc.save();
+  return bytes.buffer as ArrayBuffer;
 }
