@@ -142,6 +142,9 @@ export interface GeodisResult {
    * d'écart avec la référence, cause exacte non identifiée). */
   respect_horaires_12h: number | null;
   respect_horaires_11h: number | null;
+  /** Livraison "conforme" = avant 12h OU après 14h (exclut service de midi 12h-14h).
+   * Confirmé avec Nicolas pour rapport Krousty. */
+  respect_horaires_conformes: number | null;
   /** Répartition horaires (gabarit compact) — null si pas d'heures réelles. */
   horaires?: HoraireStats | null;
 }
