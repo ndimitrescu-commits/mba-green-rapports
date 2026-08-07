@@ -16,6 +16,6 @@ export async function readCommissions(_clientKey: string): Promise<any> {
   return {};
 }
 
-export function hasForecastTab(): boolean {
+export function hasForecastTab(_clientKey: string): boolean {
   return false;
 }
