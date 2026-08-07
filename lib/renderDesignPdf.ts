@@ -95,6 +95,8 @@ export async function renderDesignReportPdf(data: ReportData): Promise<ArrayBuff
   const b = parseInt(brandColorHex.substr(4, 2), 16) / 255;
   const brandColor = { r, g, b };
 
+  let pageCount = 1;
+
   // ===== PAGE 1: TITLE & SUMMARY =====
   let currentPage = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
   let y = A4_HEIGHT - layout.margin;
@@ -131,7 +133,7 @@ export async function renderDesignReportPdf(data: ReportData): Promise<ArrayBuff
   y = drawMetricRow(currentPage, "Total colis:", context.logistics.total_cartons, y, layout);
   y = drawMetricRow(currentPage, "Total poids (kg):", context.logistics.total_poids, y, layout);
 
-  addPageNumber(currentPage, 1, 3);
+  addPageNumber(currentPage, pageCount++, 3);
 
   // ===== PAGE 2: GEODIS DETAILS =====
   currentPage = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
@@ -170,7 +172,7 @@ export async function renderDesignReportPdf(data: ReportData): Promise<ArrayBuff
   y = drawMetricRow(currentPage, "  Avant 11h:", `${geodis.respect_horaires_11h}%`, y, layout);
   y = drawMetricRow(currentPage, "  Conforme (12h-14h excl.):", `${geodis.respect_horaires_conformes}%`, y, layout);
 
-  addPageNumber(currentPage, 2, 3);
+  addPageNumber(currentPage, pageCount++, 3);
 
   // ===== PAGE 3: GLS & DELIVERY PERFORMANCE =====
   currentPage = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
@@ -221,7 +223,7 @@ export async function renderDesignReportPdf(data: ReportData): Promise<ArrayBuff
     color: rgb(0.8, 0.2, 0.2),
   });
 
-  addPageNumber(currentPage, 3, 3);
+  addPageNumber(currentPage, pageCount++, 3);
 
   const bytes = await pdfDoc.save();
   return bytes.buffer as ArrayBuffer;

@@ -103,18 +103,21 @@ function businessDaysBetween(
 
 export async function fetchGeodisFromSupabase(
   clientCfg: any,
-  startDate: Date,
-  endDate: Date
+  startDate: Date | string,
+  endDate: Date | string
 ): Promise<GeodisResult> {
-  const holidays = frenchHolidays(startDate.getFullYear());
+  // Convert strings to dates if needed
+  const start = startDate instanceof Date ? startDate : new Date(startDate);
+  const end = endDate instanceof Date ? endDate : new Date(endDate);
+  const holidays = frenchHolidays(start.getFullYear());
 
   try {
     const { data, error } = await getSupabaseClient()
       .from("shipments")
       .select("*")
       .eq("code_client", clientCfg.code_geodis)
-      .gte("date_depart", startDate.toISOString())
-      .lte("date_depart", endDate.toISOString());
+      .gte("date_commande", start.toISOString())
+      .lte("date_commande", end.toISOString());
 
     if (error) {
       console.error("Error fetching GEODIS from Supabase:", error);
@@ -169,6 +172,8 @@ export async function fetchGeodisFromSupabase(
     let total_poids = 0;
     let total_days = 0;
     let corner_wasabi_count = 0;
+    let conforme_count = 0;
+    let conforme_total = 0;
     const delay_buckets = { total: 0, le_48h: 0, le_48h_rate: null as number | null, j_72h: 0, j_72h_rate: null as number | null, plus_72h: 0, plus_72h_rate: null as number | null };
     const by_country: Record<string, any> = {};
 
@@ -197,6 +202,18 @@ export async function fetchGeodisFromSupabase(
         }
       }
 
+      // Calculate respect_horaires_conformes (before 12h OR after 14h)
+      if (dateLivraisonReelle) {
+        conforme_total++;
+        const hour = dateLivraisonReelle.getHours();
+        const minute = dateLivraisonReelle.getMinutes();
+        const totalMinutes = hour * 60 + minute;
+        // Before 12h (720 min) OR after 14h (840 min)
+        if (totalMinutes < 12 * 60 || totalMinutes >= 14 * 60) {
+          conforme_count++;
+        }
+      }
+
       const country = row.code_pays_dest || "UNKNOWN";
       if (!by_country[country]) {
         by_country[country] = { count: 0, poids: 0 };
@@ -213,6 +230,8 @@ export async function fetchGeodisFromSupabase(
       delay_buckets.j_72h_rate = round((delay_buckets.j_72h / delay_buckets.total) * 100);
       delay_buckets.plus_72h_rate = round((delay_buckets.plus_72h / delay_buckets.total) * 100);
     }
+
+    const respect_horaires_conformes = conforme_total > 0 ? round((conforme_count / conforme_total) * 100) : null;
 
     return {
       restaurant_names: new Set<string>(),
@@ -232,7 +251,7 @@ export async function fetchGeodisFromSupabase(
       corner_wasabi_count,
       respect_horaires_12h: null,
       respect_horaires_11h: null,
-      respect_horaires_conformes: null,
+      respect_horaires_conformes,
       delay_buckets,
     };
   } catch (e) {
@@ -267,18 +286,21 @@ export async function fetchGeodisFromSupabase(
 
 export async function fetchGlsFromSupabase(
   clientCfg: any,
-  startDate: Date,
-  endDate: Date
+  startDate: Date | string,
+  endDate: Date | string
 ): Promise<GlsResult> {
-  const holidays = frenchHolidays(startDate.getFullYear());
+  // Convert strings to dates if needed
+  const start = startDate instanceof Date ? startDate : new Date(startDate);
+  const end = endDate instanceof Date ? endDate : new Date(endDate);
+  const holidays = frenchHolidays(start.getFullYear());
 
   try {
     const { data, error } = await getSupabaseClient()
       .from("gls_parcels")
       .select("*")
       .eq("code_client", clientCfg.code_gls)
-      .gte("date_depart", startDate.toISOString())
-      .lte("date_depart", endDate.toISOString());
+      .gte("date_commande", start.toISOString())
+      .lte("date_commande", end.toISOString());
 
     if (error) {
       console.error("Error fetching GLS from Supabase:", error);
