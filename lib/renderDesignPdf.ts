@@ -108,6 +108,31 @@ const PALETTES: Record<string, Pal> = {
     perfPrevu: hx("#F49B79"),
     closingText: hx("#173820"),
   },
+  // Lüks Kebab — gabarit compact depuis le 10/08/2026 (demande équipe : même
+  // format que Krousty/B&W). Palette dérivée de clients.json (encre charbon
+  // #2B2B2B, accent sable #E4C9A0, fond crème #F5F1EA) en attendant les
+  // assets définitifs (photo de couverture + logo — cf. rapport de juin).
+  LUKS_KEBAB: {
+    ...PAL_DEFAULT,
+    ink: hx("#2B2B2B"),
+    panel: hx("#2B2B2B"),
+    barPrev: hx("#E4C9A0"),
+    barConso: hx("#B08D5B"),
+    pill: hx("#E4C9A0"),
+    pillText: hx("#2B2B2B"),
+    circle1: hx("#D8CBB6"),
+    circle2: hx("#9A8866"),
+    circle3: hx("#4A4A4A"),
+    circleText: WHITE,
+    coverBg: hx("#2B2B2B"),
+    coverTitle: hx("#E4C9A0"),
+    coverText: WHITE,
+    cream: hx("#F5F1EA"),
+    perfCircle: hx("#2B2B2B"),
+    perfLivre: hx("#2B2B2B"),
+    perfPrevu: hx("#E4C9A0"),
+    closingText: hx("#2B2B2B"),
+  },
   BLACK_WHITE: {
     ...PAL_DEFAULT,
     ink: hx("#381734"),
@@ -952,8 +977,10 @@ function pageKpiCompact(c: Ctx, num: number) {
     { text: `${nf(k.total_cartons)} cartons`, big: true },
   ]);
   if (c.r.client.kpi4 === "horaire12") {
-    cardC(c, xs[3], y0, cw, ch, "taux", "Livraison avant 12:00", [
-      { text: pct(g.respect_horaires_12h), big: true },
+    // Demande équipe (10/08/2026) : afficher les LIVRAISONS CONFORMES
+    // (avant 12h + après 14h) plutôt que le seul « avant 12h ».
+    cardC(c, xs[3], y0, cw, ch, "taux", "Livraisons conformes", [
+      { text: pct(g.respect_horaires_conformes, 1), big: true },
     ]);
   } else {
     cardC(c, xs[3], y0, cw, ch, "taux", "Taux de réussite des livraisons", [
@@ -1301,6 +1328,10 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
   // WHITE" ↔ BLACK_WHITE) pour retrouver palette, assets et icônes teintées.
   const norm = (s: string) =>
     s
+      // Diacritiques retirés AVANT le filtre [^A-Z0-9] : sans ça, « LÜKS
+      // KEBAB » devenait « LKSKEBAB » et ne matchait jamais LUKS_KEBAB.
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
       .toUpperCase()
       .replace(/\bAND\b/g, "")
       .replace(/[^A-Z0-9]/g, "");
@@ -1527,17 +1558,9 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
         }
       : null
   );
-  perfPanel(
-    c,
-    980,
-    "Affrètement :",
-    g.affretement.total_commandes > 0 ? g.affretement.rate : null,
-    [
-      { label: "Total commandes :", value: nf(g.affretement.total_commandes) },
-      { label: "Livrées :", value: nf(g.affretement.livrees) },
-    ],
-    null
-  );
+  // Panneau « Affrètement » retiré à la demande de l'équipe (10/08/2026) —
+  // la prestation n'est plus mise en avant dans le rapport. Les données
+  // restent calculées (g.affretement) et éditables dans /preview au besoin.
   cardsPage(c, 9, "GLS", [
     {
       icon: "pin",

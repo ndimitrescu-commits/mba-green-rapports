@@ -426,7 +426,7 @@ export async function buildReportContext(
     ),
   ]);
   const geodis = parsers.parseGeodis(files.geodis, cfg);
-  const gls = parsers.parseGls(files.gls, cfg);
+  let gls = parsers.parseGls(files.gls, cfg);
   // "RFAs / Commissions" (= "Commission à payer - référencement") is
   // computed from NetSuite Sales Orders x the "Commission" Sheet tab's
   // per-item rates -- see fetchReferencingCommission. Null (no rates
@@ -451,6 +451,25 @@ export async function buildReportContext(
   let orderCountTotal = dget<number | null>(fin, "Nombre de commande", null);
   if (orderCountTotal === null || orderCountTotal === undefined) {
     orderCountTotal = geodis.total_commandes;
+  }
+
+  // Règle métier (équipe logistique, 10/08/2026) : l'export/flux GLS ne porte
+  // pas la notion de commande (une ligne = un colis). Le nombre de commandes
+  // GLS = total commandes (ERP) - commandes GEODIS, comme le fait l'équipe à
+  // la main. Les moyennes par commande sont recalculées sur cette base ; les
+  // valeurs restent modifiables dans /preview avant génération.
+  const glsCmds =
+    orderCountTotal !== null && orderCountTotal !== undefined
+      ? Math.max(orderCountTotal - geodis.total_commandes, 0)
+      : null;
+  if (glsCmds !== null && glsCmds > 0) {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    gls = {
+      ...gls,
+      total_commandes: glsCmds,
+      moyenne_cmds_cartons: r2(gls.total_cartons / glsCmds),
+      moyenne_cmds_poids: r2(gls.total_poids / glsCmds),
+    };
   }
 
   // A restaurant delivered by both carriers in the same month must only be
@@ -613,6 +632,25 @@ export async function buildReportContextWithLogistics(
   let orderCountTotal = dget<number | null>(fin, "Nombre de commande", null);
   if (orderCountTotal === null || orderCountTotal === undefined) {
     orderCountTotal = geodis.total_commandes;
+  }
+
+  // Règle métier (équipe logistique, 10/08/2026) : l'export/flux GLS ne porte
+  // pas la notion de commande (une ligne = un colis). Le nombre de commandes
+  // GLS = total commandes (ERP) - commandes GEODIS, comme le fait l'équipe à
+  // la main. Les moyennes par commande sont recalculées sur cette base ; les
+  // valeurs restent modifiables dans /preview avant génération.
+  const glsCmds =
+    orderCountTotal !== null && orderCountTotal !== undefined
+      ? Math.max(orderCountTotal - geodis.total_commandes, 0)
+      : null;
+  if (glsCmds !== null && glsCmds > 0) {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    gls = {
+      ...gls,
+      total_commandes: glsCmds,
+      moyenne_cmds_cartons: r2(gls.total_cartons / glsCmds),
+      moyenne_cmds_poids: r2(gls.total_poids / glsCmds),
+    };
   }
 
   const normalizedGeodis = new Set(

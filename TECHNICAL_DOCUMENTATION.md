@@ -53,7 +53,8 @@ Next.js 15 (App Router)
 
 ### Clients (lib/clients.json)
 POKAWA (standard), KROUSTY (compact), BLACK_WHITE (compact), LUKS_KEBAB
-(standard), KAZDALERIE (standard). Black & White **est** dans clients.json
+(compact depuis le 10/08 — demande équipe ; assets de couverture à fournir),
+KAZDALERIE (standard). Black & White **est** dans clients.json
 (netsuite_parent_id 194089).
 
 ---

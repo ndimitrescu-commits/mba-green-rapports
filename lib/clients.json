@@ -58,21 +58,24 @@
     "show_horaires": false
   },
   "LUKS_KEBAB": {
-    "display_name": "L\u00fcks Kebab",
+    "display_name": "Lüks Kebab",
     "brand_color": "#2B2B2B",
     "accent_color": "#E4C9A0",
     "background_color": "#F5F1EA",
     "data_feb_file_pattern": "LUKS_KEBAB_DATA",
     "breakdown_sheet_name": "LUKS KEBAB",
-    "financial_column": "L\u00fcks Kebab",
-    "logo_text": "L\u00dcKS KEBAB",
+    "financial_column": "Lüks Kebab",
+    "logo_text": "LÜKS KEBAB",
     "restaurant_name_matches": [
       "LUKS",
-      "L\u00dcKS"
+      "LÜKS"
     ],
     "restaurant_name_aliases": [],
     "corner_wasabi_count_manual": 0,
-    "netsuite_parent_id": 189319
+    "netsuite_parent_id": 189319,
+    "template": "compact",
+    "kpi4": "horaire12",
+    "show_horaires": true
   },
   "KAZDALERIE": {
     "display_name": "La Kazdalerie",

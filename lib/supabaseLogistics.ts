@@ -280,8 +280,11 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
   const decided = rows.filter((r) => r.outcome !== null).length;
 
   const isMessagerie = (r: GeodisRow) => ["MES", "MEI"].includes(up(r.type_prestation));
+  // EXP = Express France (InterExpress CXI, compte 617324), EPI = Express
+  // Europe (EEX) — ajoutés au périmètre Express le 10/08/2026 avec
+  // l'ingestion du second compte GEODIS. T24 = messagerie livrée 24h.
   const isExpress = (r: GeodisRow) =>
-    ["COU", "OVE", "EXP"].includes(up(r.type_prestation)) || up(r.code_produit) === "T24";
+    ["COU", "OVE", "EXP", "EPI"].includes(up(r.type_prestation)) || up(r.code_produit) === "T24";
   const isAffretement = (r: GeodisRow) => up(r.type_prestation) === "AFF";
 
   const messagerie = rows.filter(isMessagerie);
