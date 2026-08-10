@@ -23,7 +23,20 @@ function inList(itemCodes: string[]): string {
   return itemCodes.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(", ");
 }
 
-/** Consommation par référence (cartons + pièces) sur la période (factures). */
+/**
+ * Consommation par référence (cartons + pièces) sur la période.
+ *
+ * Règle confirmée par Nicolas (10/08/2026) : on compte les SALES ORDERS du
+ * mois (date de commande), et uniquement les SO FACTURÉES — statut NetSuite
+ * "Billed" (SalesOrd:G). Sont donc exclues : les SO annulées (Cancelled),
+ * les SO en attente/non facturées (Pending Fulfillment/Billing...), ainsi
+ * que les lignes fermées manuellement (isclosed) au sein d'une SO facturée.
+ * L'ancien comptage sur les factures (CustInvc par trandate) décalait les
+ * commandes de fin de mois facturées le mois suivant (1991 vs 2010 sur
+ * Krousty juillet 2026).
+ * NB : t.status renvoie la lettre seule ou "SalesOrd:G" selon le contexte
+ * SuiteQL — on accepte les deux formes.
+ */
 export async function fetchConsumptionCartons(
   parentId: number,
   dateFrom: string,
@@ -45,9 +58,11 @@ export async function fetchConsumptionCartons(
      JOIN item i ON i.id = tl.item
      LEFT JOIN unitstypeuom u
        ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
-     WHERE t.type = 'CustInvc'
+     WHERE t.type = 'SalesOrd'
+       AND t.status IN ('G', 'SalesOrd:G')
        AND tl.mainline = 'F' AND tl.taxline = 'F'
        AND tl.itemtype = 'InvtPart'
+       AND NVL(tl.isclosed, 'F') = 'F'
        AND t.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
        AND t.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
        AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})

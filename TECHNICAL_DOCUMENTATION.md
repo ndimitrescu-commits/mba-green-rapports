@@ -94,12 +94,14 @@ clés NetSuite/Google, le rapport se génère quand même (sections à « - »).
 
 ## Questions ouvertes / pistes
 
-1. **« Cartons facturés » 1991 vs 2010 (Krousty juillet).** Le 1991 vient de
-   NetSuite (`fetchConsumptionCartons`, factures `CustInvc` par `trandate` du
-   mois). La référence Excel attendait 2010. Piste : compter sur les **Sales
-   Orders** du mois plutôt que les factures (une commande fin juillet facturée
-   début août sort du compte actuel). À valider sur NetSuite avant de changer.
-   En attendant, la valeur est éditable dans `/preview` avant génération.
+1. **« Cartons facturés » — règle changée le 10/08/2026 (Nicolas).**
+   `fetchConsumptionCartons` compte désormais les **Sales Orders du mois,
+   facturées uniquement** (statut Billed / SalesOrd:G ; exclut Cancelled,
+   non facturées, lignes fermées) au lieu des factures `CustInvc` par
+   `trandate` — qui donnaient 1991 au lieu de 2010 (commandes de fin de mois
+   facturées le mois suivant). Valeur attendue Krousty juillet 2026 : 2010 —
+   à confirmer sur un rapport généré. La valeur reste éditable dans
+   `/preview` avant génération.
 2. **Ingestion GLS incomplète.** `gls_parcels` n'a que 16 colis Krousty en
    juillet 2026 — suspicieusement bas. À vérifier côté worker Railway GLS.
 3. **`GOOGLE_FORECAST_SHEET_ID`** (Vercel) n'est pas lu par le code, qui
