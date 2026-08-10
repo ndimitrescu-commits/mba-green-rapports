@@ -1081,9 +1081,13 @@ function pagePerfCompact(c: Ctx, num: number) {
   const p2 = be.prevu_buckets ?? EMPTY_B;
   const prevu48 = p1.le_48h + p2.le_48h;
   const prevu72 = p1.j_72h + p2.j_72h;
-  // Cercle 2 : % livré au plus tard à la date prévue par GEODIS — métrique
-  // lisible et comparable (remplace l'ancien % <=48h calendaires).
-  const onTimeRate = g.respect_date_prevue?.rate ?? null;
+  // Cercle 2 : respect des délais = % livré en <=48h OUVRÉES depuis
+  // l'expédition (règle Nicolas 10/08 : A-C = dans les délais, A-D et au-delà
+  // = hors délais ; la date prévue GEODIS n'est pas la référence — GEODIS
+  // pourrait promettre 24h, livrer 48h, et on serait quand même dans la
+  // performance). Fériés FR exclus, comme partout ailleurs.
+  const bucketTotal = b1.total + b2.total;
+  const le48Rate = bucketTotal > 0 ? Math.round((le48 / bucketTotal) * 100) : null;
 
   txt(c, "MESSAGERIE :", 560, 345, { size: 30, font: c.f.med });
   // Cercle 1 : taux de livraison.
@@ -1106,15 +1110,15 @@ function pagePerfCompact(c: Ctx, num: number) {
     ry += 62;
   }
 
-  // Cercle 2 : % livré à la date prévue (ou avant).
+  // Cercle 2 : % livré en <=48h ouvrées (respect des délais).
   c.page.drawCircle({ x: X(675), y: Y(800), size: 76 * S, color: c.p.perfCircle });
-  txt(c, onTimeRate === null ? "-" : `${nf(onTimeRate)}%`, 675, 772, {
+  txt(c, le48Rate === null ? "-" : `${nf(le48Rate)}%`, 675, 772, {
     size: 28,
     font: c.f.med,
     align: "center",
     color: WHITE,
   });
-  txt(c, "à la date prévue", 675, 810, { size: 15, align: "center", color: WHITE });
+  txt(c, "livré ≤ 48h", 675, 810, { size: 15, align: "center", color: WHITE });
   txt(c, "Respect délais jour (ouvrés)", 815, 655, { size: 28, font: c.f.med });
   const bars = [
     { label: "A-C", livre: le48, prevu: prevu48 },
