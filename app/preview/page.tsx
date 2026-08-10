@@ -28,7 +28,8 @@ async function drawPdfInto(container: HTMLDivElement, data: ArrayBuffer) {
   } catch {
     // pas de worker bundlé -> pdf.js bascule sur le "fake worker" (thread principal)
   }
-  const doc = await pdfjs.getDocument({ data }).promise;
+  const loadingTask = pdfjs.getDocument({ data });
+  const doc = await loadingTask.promise;
   container.innerHTML = "";
   const width = Math.max(container.clientWidth - 24, 320);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -48,9 +49,19 @@ async function drawPdfInto(container: HTMLDivElement, data: ArrayBuffer) {
     canvas.style.display = "block";
     canvas.style.margin = "0 auto 14px";
     container.appendChild(canvas);
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    // pdf.js >= 5 attend `canvas` ; les versions antérieures `canvasContext`.
+    // On passe les deux pour rester compatible quelle que soit la version.
+    await page.render({ canvas, canvasContext: canvas.getContext("2d"), viewport }).promise;
   }
-  doc.destroy();
+  // Libération défensive : selon la version de pdf.js, destroy() vit sur le
+  // document ou sur la loadingTask — et son absence ne doit jamais casser
+  // l'aperçu (l'erreur "r.destroy is not a function" masquait le rendu).
+  try {
+    if (typeof doc?.destroy === "function") await doc.destroy();
+    else if (typeof loadingTask?.destroy === "function") await loadingTask.destroy();
+  } catch {
+    // rien : l'aperçu est déjà rendu, la libération est best-effort
+  }
 }
 
 type ClientsConfig = Record<string, { display_name: string }>;
