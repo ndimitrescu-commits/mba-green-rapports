@@ -27,15 +27,16 @@ function inList(itemCodes: string[]): string {
  * Consommation par référence (cartons + pièces) sur la période.
  *
  * Règle confirmée par Nicolas (10/08/2026) : on compte les SALES ORDERS du
- * mois (date de commande), et uniquement les SO FACTURÉES — statut NetSuite
- * "Billed" (SalesOrd:G). Sont donc exclues : les SO annulées (Cancelled),
- * les SO en attente/non facturées (Pending Fulfillment/Billing...), ainsi
- * que les lignes fermées manuellement (isclosed) au sein d'une SO facturée.
- * L'ancien comptage sur les factures (CustInvc par trandate) décalait les
- * commandes de fin de mois facturées le mois suivant (1991 vs 2010 sur
- * Krousty juillet 2026).
- * NB : t.status renvoie la lettre seule ou "SalesOrd:G" selon le contexte
- * SuiteQL — on accepte les deux formes.
+ * mois (date de commande), et uniquement ce qui a été FACTURÉ — c'est-à-dire
+ * les lignes de factures (CustInvc) LIÉES aux SO datées du mois
+ * (`createdfrom`). Les SO annulées n'ont pas de facture, les SO non
+ * facturées non plus : elles sortent naturellement du compte. Une SO de fin
+ * de mois facturée début août reste comptée sur juillet (date de commande).
+ * C'est exactement la même base "facturé rattaché à la commande du mois" que
+ * le calcul des commissions (fetchInvoicedByItem / commissionsXlsx) et que
+ * le "Nombre de commande" du financier — cohérence validée par les devs.
+ * L'ancien comptage (factures par leur propre trandate) donnait 1991 au lieu
+ * de 2010 sur Krousty juillet 2026.
  */
 export async function fetchConsumptionCartons(
   parentId: number,
@@ -51,21 +52,21 @@ export async function fetchConsumptionCartons(
   }>(
     `SELECT i.itemid AS itemcode,
             MAX(i.displayname) AS description,
-            SUM(-tl.quantity) AS qty_pieces,
+            SUM(-til.quantity) AS qty_pieces,
             MAX(NVL(u.conversionrate, 1)) AS per_carton
-     FROM transaction t
-     JOIN transactionline tl ON tl.transaction = t.id
-     JOIN item i ON i.id = tl.item
+     FROM transaction so
+     JOIN transactionline til ON til.createdfrom = so.id
+     JOIN transaction inv ON inv.id = til.transaction
+     JOIN item i ON i.id = til.item
      LEFT JOIN unitstypeuom u
        ON u.internalid = NVL(i.saleunit, i.stockunit) AND u.unitstype = i.unitstype
-     WHERE t.type = 'SalesOrd'
-       AND t.status IN ('G', 'SalesOrd:G')
-       AND tl.mainline = 'F' AND tl.taxline = 'F'
-       AND tl.itemtype = 'InvtPart'
-       AND NVL(tl.isclosed, 'F') = 'F'
-       AND t.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
-       AND t.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
-       AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
+     WHERE so.type = 'SalesOrd'
+       AND inv.type = 'CustInvc'
+       AND til.mainline = 'F' AND til.taxline = 'F'
+       AND til.itemtype = 'InvtPart'
+       AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+       AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+       AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
      GROUP BY i.itemid`
   );
   return rows.map((r) => {

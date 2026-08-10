@@ -194,14 +194,26 @@ function emptyBuckets(): DelayBuckets {
   return { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null };
 }
 
-function computeBuckets(rows: GeodisRow[]): DelayBuckets {
+/**
+ * Paliers de délai GEODIS en JOURS OUVRÉS (fériés FR exclus) — même
+ * convention que les pages GLS et que la règle express 24h. L'ancien calcul
+ * en jours calendaires pénalisait les départs de fin de semaine (un départ
+ * vendredi livré lundi comptait 3 jours) : A-C = <=2 jours ouvrés,
+ * A-D = 3 jours ouvrés, au-delà = >A-D.
+ * `dateField` permet de bucketiser la livraison RÉELLE (barres "Livré") ou
+ * la livraison PRÉVUE GEODIS (barres "Prévu").
+ */
+function computeBuckets(
+  rows: GeodisRow[],
+  holidays: Set<string>,
+  dateField: "date_livraison_reelle" | "date_livraison_prevue" = "date_livraison_reelle"
+): DelayBuckets {
   const b = emptyBuckets();
   for (const r of rows) {
-    if (!r.date_depart || !r.date_livraison_reelle) continue;
-    const dep = new Date(r.date_depart).getTime();
-    const del = new Date(r.date_livraison_reelle).getTime();
-    if (Number.isNaN(dep) || Number.isNaN(del) || del < dep) continue;
-    const days = Math.round((del - dep) / 86400000);
+    const dep = parisParts(r.date_depart);
+    const del = parisParts(r[dateField] ?? null);
+    if (!dep || !del || del.date < dep.date) continue;
+    const days = businessDaysBetween(dep.date, del.date, holidays);
     b.total++;
     if (days <= 2) b.le_48h++;
     else if (days <= 3) b.j_72h++;
@@ -215,14 +227,15 @@ function computeBuckets(rows: GeodisRow[]): DelayBuckets {
   return b;
 }
 
-function countryStats(rows: GeodisRow[], withCountries: boolean): CountryStats {
+function countryStats(rows: GeodisRow[], withCountries: boolean, holidays: Set<string>): CountryStats {
   const livrees = rows.filter((r) => r.outcome === "livre").length;
   const decided = rows.filter((r) => r.outcome !== null).length;
   const stats: CountryStats = {
     total_commandes: rows.length,
     livrees,
     rate: decided > 0 ? round((livrees / decided) * 100, 0) : null,
-    delay_buckets: computeBuckets(rows),
+    delay_buckets: computeBuckets(rows, holidays, "date_livraison_reelle"),
+    prevu_buckets: computeBuckets(rows, holidays, "date_livraison_prevue"),
   };
   if (withCountries) {
     const by: Record<string, number> = {};
@@ -348,8 +361,23 @@ export function computeGeodisResult(rows: GeodisRow[], year: number): GeodisResu
     total_palettes: totalPalettes,
     total_poids: totalPoids,
     taux_reussite: decided > 0 ? round((livrees / decided) * 100, 0) : null,
-    france: countryStats(franceRows, false),
-    belgique_lux: countryStats(beluxRows, true),
+    france: countryStats(franceRows, false, holidays),
+    belgique_lux: countryStats(beluxRows, true, holidays),
+    // Respect de la date prévue GEODIS : parmi les livraisons ayant les deux
+    // dates, part livrée au plus tard le jour prévu (comparaison en date
+    // locale Paris). C'est le taux mis en avant sur la page Performance.
+    respect_date_prevue: (() => {
+      const both = rows
+        .map((r) => ({
+          reelle: parisParts(r.date_livraison_reelle),
+          prevue: parisParts(r.date_livraison_prevue),
+        }))
+        .filter((p): p is { reelle: NonNullable<ReturnType<typeof parisParts>>; prevue: NonNullable<ReturnType<typeof parisParts>> } => p.reelle !== null && p.prevue !== null);
+      const onTime = both.filter((p) => p.reelle.date <= p.prevue.date).length;
+      return both.length > 0
+        ? { total: both.length, on_time: onTime, rate: round((onTime / both.length) * 100, 0) }
+        : null;
+    })(),
     express: {
       total_commandes: expressRows.length,
       livrees: expressRows.filter((r) => r.outcome === "livre").length,

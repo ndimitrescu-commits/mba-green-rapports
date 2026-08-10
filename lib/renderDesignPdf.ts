@@ -1069,12 +1069,21 @@ function pagePerfCompact(c: Ctx, num: number) {
   const total = fr.total_commandes + be.total_commandes;
   const livrees = fr.livrees + be.livrees;
   const rate = total > 0 ? Math.round((livrees / total) * 100) : null;
-  const b1 = fr.delay_buckets ?? { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null };
-  const b2 = be.delay_buckets ?? b1;
-  const leTotal = b1.total + (be.delay_buckets ? b2.total : 0);
-  const le48 = b1.le_48h + (be.delay_buckets ? b2.le_48h : 0);
-  const j72 = b1.j_72h + (be.delay_buckets ? b2.j_72h : 0);
-  const le48rate = leTotal > 0 ? Math.round((le48 / leTotal) * 1000) / 10 : null;
+  const EMPTY_B = { total: 0, le_48h: 0, le_48h_rate: null, j_72h: 0, j_72h_rate: null, plus_72h: 0, plus_72h_rate: null };
+  const b1 = fr.delay_buckets ?? EMPTY_B;
+  const b2 = be.delay_buckets ?? EMPTY_B;
+  const le48 = b1.le_48h + b2.le_48h;
+  const j72 = b1.j_72h + b2.j_72h;
+  // Barres "Prévu" : paliers calculés sur la date de livraison PRÉVUE GEODIS
+  // (même définition jours ouvrés que les barres "Livré") — et non plus le
+  // total des livraisons, qui rendait la comparaison illisible.
+  const p1 = fr.prevu_buckets ?? EMPTY_B;
+  const p2 = be.prevu_buckets ?? EMPTY_B;
+  const prevu48 = p1.le_48h + p2.le_48h;
+  const prevu72 = p1.j_72h + p2.j_72h;
+  // Cercle 2 : % livré au plus tard à la date prévue par GEODIS — métrique
+  // lisible et comparable (remplace l'ancien % <=48h calendaires).
+  const onTimeRate = g.respect_date_prevue?.rate ?? null;
 
   txt(c, "MESSAGERIE :", 560, 345, { size: 30, font: c.f.med });
   // Cercle 1 : taux de livraison.
@@ -1097,18 +1106,19 @@ function pagePerfCompact(c: Ctx, num: number) {
     ry += 62;
   }
 
-  // Cercle 2 : respect délais (<=48h ouvrées).
+  // Cercle 2 : % livré à la date prévue (ou avant).
   c.page.drawCircle({ x: X(675), y: Y(800), size: 76 * S, color: c.p.perfCircle });
-  txt(c, le48rate === null ? "-" : nf(le48rate, le48rate % 1 === 0 ? 0 : 1), 675, 780, {
+  txt(c, onTimeRate === null ? "-" : `${nf(onTimeRate)}%`, 675, 772, {
     size: 28,
     font: c.f.med,
     align: "center",
     color: WHITE,
   });
-  txt(c, "Respect délais jour", 815, 655, { size: 28, font: c.f.med });
+  txt(c, "à la date prévue", 675, 810, { size: 15, align: "center", color: WHITE });
+  txt(c, "Respect délais jour (ouvrés)", 815, 655, { size: 28, font: c.f.med });
   const bars = [
-    { label: "A-C", livre: le48, prevu: leTotal },
-    { label: "A-D", livre: j72, prevu: 0 },
+    { label: "A-C", livre: le48, prevu: prevu48 },
+    { label: "A-D", livre: j72, prevu: prevu72 },
   ];
   const maxV = Math.max(1, ...bars.flatMap((b) => [b.livre, b.prevu]));
   // Longueur max ~404 px ref. (mesuree : barre "Prevu" A-C du rapport Krousty).
@@ -1139,6 +1149,11 @@ function pageFinancesCompact(c: Ctx, num: number) {
   txt(c, "Données Financières", 80, 95, { size: 58, font: c.f.xbold });
   rrect(c, 47, 282, 1824, 843, 35, c.p.panel);
   const fin = c.r.financials;
+  // Total des règlements = CA HT total, par définition (la ventilation par
+  // condition de règlement somme au CA — validé par les devs sur Février
+  // 2026). L'ancienne somme n'additionnait que les 6 conditions mappées :
+  // toute condition NetSuite non mappée (cas Krousty) faisait manquer
+  // l'essentiel du total (9 641 € affichés pour 88 077 € de CA).
   const regl = [
     fin.reglement_livraison,
     fin.reglement_commande,
@@ -1149,7 +1164,8 @@ function pageFinancesCompact(c: Ctx, num: number) {
   ]
     .map(asNum)
     .filter((v): v is number => v !== null);
-  const totalReglements = regl.length > 0 ? Math.round(regl.reduce((s, v) => s + v, 0) * 100) / 100 : null;
+  const sommeMappee = regl.length > 0 ? Math.round(regl.reduce((s, v) => s + v, 0) * 100) / 100 : null;
+  const totalReglements = asNum(fin.ca_total) ?? sommeMappee;
 
   const cards: { x: number; y: number; icon: string; title: string; value: string }[] = [
     { x: 709, y: 325, icon: "ca", title: "Chiffre d'affaires", value: eur(asNum(fin.ca_total)) },
@@ -1448,10 +1464,10 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
         {
           label: "<=A-C",
           navy: g.france.delay_buckets?.le_48h ?? 0,
-          pink: g.france.delay_buckets?.total ?? 0,
+          pink: g.france.prevu_buckets?.le_48h ?? 0,
         },
-        { label: "=A-D", navy: g.france.delay_buckets?.j_72h ?? 0, pink: 0 },
-        { label: ">A-D+", navy: g.france.delay_buckets?.plus_72h ?? 0, pink: 0 },
+        { label: "=A-D", navy: g.france.delay_buckets?.j_72h ?? 0, pink: g.france.prevu_buckets?.j_72h ?? 0 },
+        { label: ">A-D+", navy: g.france.delay_buckets?.plus_72h ?? 0, pink: g.france.prevu_buckets?.plus_72h ?? 0 },
       ],
     }
   );
@@ -1476,10 +1492,10 @@ export async function renderDesignReportPdf(data: ReportData): Promise<Uint8Arra
         {
           label: "<=A-C",
           navy: be.delay_buckets?.le_48h ?? 0,
-          pink: be.delay_buckets?.total ?? 0,
+          pink: be.prevu_buckets?.le_48h ?? 0,
         },
-        { label: "=A-D", navy: be.delay_buckets?.j_72h ?? 0, pink: 0 },
-        { label: ">A-D+", navy: be.delay_buckets?.plus_72h ?? 0, pink: 0 },
+        { label: "=A-D", navy: be.delay_buckets?.j_72h ?? 0, pink: be.prevu_buckets?.j_72h ?? 0 },
+        { label: ">A-D+", navy: be.delay_buckets?.plus_72h ?? 0, pink: be.prevu_buckets?.plus_72h ?? 0 },
       ],
     }
   );

@@ -81,7 +81,11 @@ export interface CountryStats {
   livrees: number;
   rate: number | null;
   by_country?: Record<string, number>;
+  /** Paliers de délai sur la livraison RÉELLE (jours ouvrés, fériés FR exclus). */
   delay_buckets?: DelayBuckets;
+  /** Paliers de délai sur la livraison PRÉVUE GEODIS — barres "Prévu" des
+   * pages Performance (même convention jours ouvrés). */
+  prevu_buckets?: DelayBuckets;
 }
 
 export interface ServiceStats {
@@ -122,6 +126,11 @@ export interface GeodisResult {
    * page). */
   express: ServiceStats;
   affretement: ServiceStats;
+  /** Respect de la date de livraison prévue GEODIS : parmi les livraisons
+   * portant date réelle ET date prévue, part livrée au plus tard le jour
+   * prévu. Mis en avant sur la page "Logistique : Performance" (remplace
+   * l'ancien % <=48h calendaires, peu lisible). */
+  respect_date_prevue?: { total: number; on_time: number; rate: number | null } | null;
   /** "Livré en 24h" (jours ouvrés, hors week-ends ET jours fériés français) :
    * = 1 jour ouvré si pas de week-end/férié entre Départ et Date (peu
    * importe l'heure), OU 1 jour ouvré avec traversée d'un week-end/férié

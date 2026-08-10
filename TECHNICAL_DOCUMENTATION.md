@@ -102,8 +102,13 @@ clés NetSuite/Google, le rapport se génère quand même (sections à « - »).
    facturées le mois suivant). Valeur attendue Krousty juillet 2026 : 2010 —
    à confirmer sur un rapport généré. La valeur reste éditable dans
    `/preview` avant génération.
-2. **Ingestion GLS incomplète.** `gls_parcels` n'a que 16 colis Krousty en
+2. **Écart cartons Articles vs Livraisons.** « Articles » = cartons facturés
+   rattachés aux SO du mois (NetSuite) ; « Livraisons » = cartons expédiés vus
+   par les transporteurs (Supabase). Un écart est normal (commandes de fin de
+   mois expédiées le mois suivant) mais il est amplifié par l'ingestion GLS
+   incomplète (voir point suivant).
+3. **Ingestion GLS incomplète.** `gls_parcels` n'a que 16 colis Krousty en
    juillet 2026 — suspicieusement bas. À vérifier côté worker Railway GLS.
-3. **`GOOGLE_FORECAST_SHEET_ID`** (Vercel) n'est pas lu par le code, qui
+4. **`GOOGLE_FORECAST_SHEET_ID`** (Vercel) n'est pas lu par le code, qui
    attend `PREVISIONNEL_SHEET_ID` / `DEMAND_PLANNING_SHEET_ID` (avec IDs par
    défaut codés en dur — fonctionne donc quand même).
