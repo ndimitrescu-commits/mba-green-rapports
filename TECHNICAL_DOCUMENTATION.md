@@ -108,8 +108,13 @@ clés NetSuite/Google, le rapport se génère quand même (sections à « - »).
    par les transporteurs (Supabase). Un écart est normal (commandes de fin de
    mois expédiées le mois suivant) mais il est amplifié par l'ingestion GLS
    incomplète (voir point suivant).
-3. **Ingestion GLS incomplète.** `gls_parcels` n'a que 16 colis Krousty en
-   juillet 2026 — suspicieusement bas. À vérifier côté worker Railway GLS.
+3. **GLS : données complètes depuis le 1er juin 2026** (vérifié le 10/08 :
+   ~1 700-1 800 colis/mois, tous clients). Les 16 colis Krousty de juillet
+   sont la réalité (Krousty n'utilise GLS que pour les petits envois/SAV).
+   Vigilance : le flux RETINF est différentiel et sans rétention côté GLS —
+   l'app gls-suivi a subi une panne silencieuse du 21/07 au 03/08 (crashs
+   HTTP/2, corrigés) sans que personne ne le voie. Un garde-fou de
+   surveillance de la fraîcheur d'ingestion est recommandé.
 4. **`GOOGLE_FORECAST_SHEET_ID`** (Vercel) n'est pas lu par le code, qui
    attend `PREVISIONNEL_SHEET_ID` / `DEMAND_PLANNING_SHEET_ID` (avec IDs par
    défaut codés en dur — fonctionne donc quand même).
