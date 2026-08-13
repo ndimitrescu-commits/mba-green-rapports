@@ -521,12 +521,11 @@ export async function buildReportContext(
     month_label: monthLabel,
     kpi: {
       sku_count: articles.sku_count,
-      // NOTE: this is now a CARTONS figure (sourced from NetSuite, unit-
-      // converted), not pieces -- the old DATA file's "Cons." column was in
-      // pieces. Field name kept as-is to avoid touching reportData.ts's
-      // mapping, but the number/unit shown on page 1 changes as a result.
-      // Flagged explicitly to Nicolas, not a silent change.
-      pieces_consumed: Math.trunc(articles.total_cartons_consumed),
+      // Pièces vendues du mois (base "facturé rattaché aux SO du mois") —
+      // identique à la somme de la colonne H « Quantité (pièces) » du fichier
+      // commissions (demande Aurélie 12/08/2026 : la bulle Articles affiche
+      // les pièces, pas les cartons).
+      pieces_consumed: Math.round(articles.total_pieces_consumed),
       cartons_consumed: Math.round(articles.total_cartons_consumed),
       ca_actual: Number(caActual),
       ca_forecast: articles.ca_forecast,

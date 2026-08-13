@@ -404,13 +404,14 @@ function pageKpi(c: Ctx) {
     y0 = 320;
   card(c, x0, y0, cw, ch, "articles", "Articles", [
     { text: `SKU : ${nf(k.sku_count)}`, big: true },
-    // En cartons (unité métier MBA Green) — les pièces restent dans le
-    // contexte mais ne sont plus affichées (demande Nicolas 04/08/2026).
+    // Pièces vendues (somme colonne H du fichier commissions) — demande
+    // Aurélie 12/08/2026, valable pour tous les rapports. Repli cartons si
+    // la donnée pièces manque.
     {
       text:
-        k.cartons_consumed !== undefined && k.cartons_consumed !== null
-          ? `Cartons : ${nf(k.cartons_consumed)}`
-          : `Pièces : ${nf(k.pieces_consumed)}`,
+        k.pieces_consumed !== undefined && k.pieces_consumed !== null
+          ? `Pièces : ${nf(k.pieces_consumed)}`
+          : `Cartons : ${nf(k.cartons_consumed)}`,
       big: true,
     },
   ]);
@@ -960,11 +961,13 @@ function pageKpiCompact(c: Ctx, num: number) {
   const xs = [108, 548, 987, 1427];
   cardC(c, xs[0], y0, cw, ch, "articles", "Articles", [
     { text: `SKU : ${nf(k.sku_count)}`, big: true },
+    // Pièces vendues (somme colonne H du fichier commissions) — demande
+    // Aurélie 12/08/2026.
     {
       text:
-        k.cartons_consumed !== undefined && k.cartons_consumed !== null
-          ? `Cartons : ${nf(k.cartons_consumed)}`
-          : `Pièces : ${nf(k.pieces_consumed)}`,
+        k.pieces_consumed !== undefined && k.pieces_consumed !== null
+          ? `Pièces : ${nf(k.pieces_consumed)}`
+          : `Cartons : ${nf(k.cartons_consumed)}`,
       big: true,
     },
   ]);
