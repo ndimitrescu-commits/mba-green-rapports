@@ -21,16 +21,13 @@ import {
 } from "./netsuiteData";
 import {
   fetchFinancials,
-  fetchReferencingCommission,
-  fetchReferencingCommissionFromRfa,
+  fetchReferencingCommissionUnified,
 } from "./netsuiteFinancials";
 import { readForecastFromDb } from "./forecastsDb";
 import { readRfaRatesForCalc } from "./rfaRates";
 import {
   hasForecastTab,
   readForecast,
-  readPrices,
-  readCommissions,
   type ForecastRow,
 } from "./googleSheets";
 import type {
@@ -201,20 +198,20 @@ async function buildArticles(
   month: ParsedMonth,
   forecastRows: ForecastRow[]
 ): Promise<ArticlesResult> {
-  // Prix unitaire carton, par ordre de priorité :
-  //  1. onglet "Prix" du Prévisionnel (saisie manuelle, si remplie) ;
-  //  2. prix catalogue NetSuite du niveau de prix du groupe client
+  // Prix unitaire carton, par ordre de priorité (décision Nicolas,
+  // 08/09/2026 : plus d'onglet "Prix" manuel — le classeur Forecast Clients
+  // n'en a pas — le prix retombe directement sur NetSuite) :
+  //  1. prix catalogue NetSuite du niveau de prix du groupe client
   //     (ex. "Pokawa France") — le vrai tarif, y compris pour des références
   //     prévues mais pas facturées dans le mois ;
-  //  3. prix moyen réalisé du mois (factures) en dernier recours.
+  //  2. prix moyen réalisé du mois (factures) en dernier recours.
   // "CA attendu" = prévisions × prix unitaire.
-  const [consumption, prices, catalogPrices, avgPrices] = await Promise.all([
+  const [consumption, catalogPrices, avgPrices] = await Promise.all([
     safe(
       "NetSuite consommation",
       fetchConsumptionCartons(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
       [] as Awaited<ReturnType<typeof fetchConsumptionCartons>>
     ),
-    safe("Sheets prix", readPrices(clientKey), new Map<string, number>()),
     safe(
       "NetSuite prix catalogue",
       fetchCatalogPriceByCarton(cfg.netsuite_parent_id),
@@ -249,7 +246,7 @@ async function buildArticles(
     const forecastCartons = forecastMap.get(code) ?? 0;
     const cons = consumptionMap.get(code);
     const consCartons = cons?.qty ?? 0;
-    const price = prices.get(code) ?? catalogPrices.get(code) ?? avgPrices.get(code) ?? 0;
+    const price = catalogPrices.get(code) ?? avgPrices.get(code) ?? 0;
     const rate = forecastCartons ? Math.round((consCartons / forecastCartons) * 100) : null;
 
     items.push({
@@ -390,13 +387,13 @@ export async function buildReportContext(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  // Taux RFA (Supabase, prioritaire) + onglet Commission du Sheet (repli).
-  // L'échec de l'un ne bloque pas la génération : commission à "-" plutôt
-  // qu'un rapport en erreur.
-  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
+  // Champ NetSuite €/carton (prioritaire, décision Nicolas 08/09/2026) +
+  // référentiel Supabase rfa_rates (repli par référence tant que le champ
+  // NetSuite n'est pas encore rempli pour tous les SKU). L'échec ne bloque
+  // pas la génération : commission à "-" plutôt qu'un rapport en erreur.
+  const [forecastRows, rfaRates] = await Promise.all([
     safe("Prévisions (Supabase/Sheets)", readForecastRows(clientKey, cfg), [] as ForecastRow[]),
-    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
-    safe("Taux RFA (Supabase)", readRfaRatesForCalc(clientKey), null),
+    safe("Taux RFA (Supabase, repli)", readRfaRatesForCalc(clientKey), null),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
@@ -409,30 +406,23 @@ export async function buildReportContext(
     ),
     safe(
       "Commission référencement",
-      rfaRates && rfaRates.length > 0
-        ? fetchReferencingCommissionFromRfa(
-            cfg.netsuite_parent_id,
-            parsedMonth.dateFrom,
-            parsedMonth.dateTo,
-            rfaRates
-          )
-        : fetchReferencingCommission(
-            cfg.netsuite_parent_id,
-            parsedMonth.dateFrom,
-            parsedMonth.dateTo,
-            commissionRates
-          ),
+      fetchReferencingCommissionUnified(
+        cfg.netsuite_parent_id,
+        parsedMonth.dateFrom,
+        parsedMonth.dateTo,
+        process.env.NETSUITE_COMMISSION_FIELD_ID,
+        rfaRates
+      ).then((r) => r.commission),
       null
     ),
   ]);
   const geodis = parsers.parseGeodis(files.geodis, cfg);
   let gls = parsers.parseGls(files.gls, cfg);
   // "RFAs / Commissions" (= "Commission à payer - référencement") is
-  // computed from NetSuite Sales Orders x the "Commission" Sheet tab's
-  // per-item rates -- see fetchReferencingCommission. Null (no rates
-  // configured yet for this client, e.g. Krousty/Lüks Kebab/Kazdalerie for
-  // now) is treated as "not available" and the key is simply omitted, same
-  // convention as before, so dget() falls back to "-".
+  // computed from billed cartons x the NetSuite item field's €/carton rate
+  // (repli rfa_rates par référence) -- see fetchReferencingCommissionUnified.
+  // Null (no rate at all for any invoiced reference) is treated as "not
+  // available" and the key is simply omitted, so dget() falls back to "-".
   // "RFAs / Commissions PGK" (stock PKG) still has no known source
   // (confirmed by Nicolas) and is deliberately never set here.
   const fin: Record<string, unknown> = {
@@ -580,13 +570,13 @@ export async function buildReportContextWithLogistics(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  // Taux RFA (Supabase, prioritaire) + onglet Commission du Sheet (repli).
-  // L'échec de l'un ne bloque pas la génération : commission à "-" plutôt
-  // qu'un rapport en erreur.
-  const [forecastRows, commissionRates, rfaRates] = await Promise.all([
+  // Champ NetSuite €/carton (prioritaire, décision Nicolas 08/09/2026) +
+  // référentiel Supabase rfa_rates (repli par référence tant que le champ
+  // NetSuite n'est pas encore rempli pour tous les SKU). L'échec ne bloque
+  // pas la génération : commission à "-" plutôt qu'un rapport en erreur.
+  const [forecastRows, rfaRates] = await Promise.all([
     safe("Prévisions (Supabase/Sheets)", readForecastRows(clientKey, cfg), [] as ForecastRow[]),
-    readCommissions(clientKey).catch(() => ({}) as Record<string, number>),
-    safe("Taux RFA (Supabase)", readRfaRatesForCalc(clientKey), null),
+    safe("Taux RFA (Supabase, repli)", readRfaRatesForCalc(clientKey), null),
   ]);
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
@@ -599,19 +589,13 @@ export async function buildReportContextWithLogistics(
     ),
     safe(
       "Commission référencement",
-      rfaRates && rfaRates.length > 0
-        ? fetchReferencingCommissionFromRfa(
-            cfg.netsuite_parent_id,
-            parsedMonth.dateFrom,
-            parsedMonth.dateTo,
-            rfaRates
-          )
-        : fetchReferencingCommission(
-            cfg.netsuite_parent_id,
-            parsedMonth.dateFrom,
-            parsedMonth.dateTo,
-            commissionRates
-          ),
+      fetchReferencingCommissionUnified(
+        cfg.netsuite_parent_id,
+        parsedMonth.dateFrom,
+        parsedMonth.dateTo,
+        process.env.NETSUITE_COMMISSION_FIELD_ID,
+        rfaRates
+      ).then((r) => r.commission),
       null
     ),
   ]);

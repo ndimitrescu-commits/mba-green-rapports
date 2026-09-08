@@ -220,19 +220,33 @@ export async function fetchFinancials(
 }
 
 /** Agrégat facturé par article (lignes de factures liées aux Sales Orders du
- * mois) : pièces, pièces/colis (unité de vente NetSuite) et montant HT.
- * Base commune du calcul de commission (Sheet % ou référentiel rfa_rates). */
+ * mois) : pièces, pièces/colis (unité de vente NetSuite) et montant HT, plus
+ * — si `fieldId` est fourni — la valeur du champ NetSuite libre portant le
+ * taux de commission (€/carton) pour cet article.
+ * Base commune du calcul de commission. */
 async function fetchInvoicedByItem(
   parentId: number,
   dateFrom: string,
-  dateTo: string
-): Promise<{ itemid: string; qty_pieces: number; per_carton: number; total_ht: number }[]> {
+  dateTo: string,
+  fieldId?: string | null
+): Promise<{ itemid: string; qty_pieces: number; per_carton: number; total_ht: number; ns_rate: number | null }[]> {
   const toExcl = nextDay(dateTo);
-  return suiteql(
+  // fieldId vient d'une variable d'environnement qu'on contrôle (jamais
+  // d'entrée utilisateur) — on valide quand même le format d'un ID de champ
+  // custitem NetSuite avant de l'interpoler dans le SELECT.
+  const safeFieldId = fieldId && /^custitem[a-z0-9_]*$/i.test(fieldId) ? fieldId : null;
+  const rows = await suiteql<{
+    itemid: string;
+    qty_pieces: number;
+    per_carton: number;
+    total_ht: number;
+    ns_rate: number | null;
+  }>(
     `SELECT i.itemid AS itemid,
             SUM(-til.quantity) AS qty_pieces,
             MAX(NVL(u.conversionrate, 1)) AS per_carton,
             SUM(CASE WHEN til.taxline = 'F' AND til.mainline = 'F' THEN -til.foreignamount ELSE 0 END) AS total_ht
+            ${safeFieldId ? `, MAX(i.${safeFieldId}) AS ns_rate` : ", NULL AS ns_rate"}
      FROM transaction so
      JOIN transactionline til ON til.createdfrom = so.id
      JOIN transaction inv ON inv.id = til.transaction
@@ -248,86 +262,75 @@ async function fetchInvoicedByItem(
        AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
      GROUP BY i.itemid`
   );
+  return rows;
 }
 
 /**
- * Commission de référencement depuis le référentiel Supabase `rfa_rates`
- * (source prioritaire depuis août 2026, onglet /rfa de l'app) — base
- * "facturé uniquement" : lignes de factures liées aux commandes du mois.
- * Par référence : colis facturés x rfa_par_colis (€/colis, Krousty/Lüks),
- * sinon CA HT facturé x commission_pct (B&W/Pokawa). Même calcul que le
- * fichier commissions xlsx (lib/commissionsXlsx.ts) — les deux totaux sont
- * identiques par construction.
- * Renvoie null si aucune référence facturée ne matche le référentiel.
+ * Commission de référencement — décision Nicolas (08/09/2026) : source
+ * primaire = champ NetSuite libre `fieldId` sur la fiche article (€/carton),
+ * multiplié par les cartons FACTURÉS du mois (même base "facturé
+ * uniquement" que le reste du rapport). Tant que ce champ n'est pas encore
+ * renseigné pour un article donné, repli sur l'ancien référentiel Supabase
+ * `rfa_rates` (€/colis ou % CA HT, onglet /rfa) pour cet article précis —
+ * filet de sécurité pendant la bascule, à retirer une fois le champ NetSuite
+ * entièrement rempli. Renvoie aussi la liste des références facturées sans
+ * AUCUN taux (ni champ NetSuite ni rfa_rates), pour signalement.
  */
-export async function fetchReferencingCommissionFromRfa(
+export async function fetchReferencingCommissionUnified(
   parentId: number,
   dateFrom: string,
   dateTo: string,
-  rfaRates: { reference: string; rfa_par_colis: number | null; commission_pct: number | null }[]
-): Promise<number | null> {
-  if (!rfaRates || rfaRates.length === 0) return null;
-  const byRef = new Map(rfaRates.map((r) => [r.reference.trim().toUpperCase(), r]));
-  const rows = await fetchInvoicedByItem(parentId, dateFrom, dateTo);
+  fieldId: string | null | undefined,
+  rfaRates: { reference: string; rfa_par_colis: number | null; commission_pct: number | null }[] | null | undefined
+): Promise<{ commission: number | null; missingRate: string[] }> {
+  const rows = await fetchInvoicedByItem(parentId, dateFrom, dateTo, fieldId ?? null);
+  const byRef = new Map((rfaRates ?? []).map((r) => [r.reference.trim().toUpperCase(), r]));
   let commission = 0;
   let matched = false;
+  const missingRate: string[] = [];
   for (const row of rows) {
-    const rate = byRef.get(String(row.itemid).trim().toUpperCase());
-    if (!rate) continue;
     const perCarton = Number(row.per_carton) > 0 ? Number(row.per_carton) : 1;
-    if (rate.rfa_par_colis !== null && rate.rfa_par_colis !== undefined) {
+    const cartons = (Number(row.qty_pieces) || 0) / perCarton;
+    const nsRate = row.ns_rate !== null && row.ns_rate !== undefined ? Number(row.ns_rate) : null;
+    if (nsRate !== null && Number.isFinite(nsRate) && nsRate > 0) {
       matched = true;
-      commission += ((Number(row.qty_pieces) || 0) / perCarton) * Number(rate.rfa_par_colis);
-    } else if (rate.commission_pct !== null && rate.commission_pct !== undefined) {
+      commission += cartons * nsRate;
+      continue;
+    }
+    const legacy = byRef.get(String(row.itemid).trim().toUpperCase());
+    if (legacy?.rfa_par_colis !== null && legacy?.rfa_par_colis !== undefined) {
       matched = true;
-      commission += (Number(row.total_ht) || 0) * Number(rate.commission_pct);
+      commission += cartons * Number(legacy.rfa_par_colis);
+    } else if (legacy?.commission_pct !== null && legacy?.commission_pct !== undefined) {
+      matched = true;
+      commission += (Number(row.total_ht) || 0) * Number(legacy.commission_pct);
+    } else {
+      missingRate.push(String(row.itemid));
     }
   }
-  return matched ? Math.round(commission * 100) / 100 : null;
+  return { commission: matched ? Math.round(commission * 100) / 100 : null, missingRate };
 }
 
 /**
- * Commission de référencement = montants HT FACTURÉS par article (lignes de
- * factures liées aux Sales Orders du mois) x taux par article (onglet
- * "Commission" du Sheet client). Base "facturé uniquement" — règle métier
- * confirmée par Nicolas (05/08/2026) : les commissions aux groupes sont dues
- * sur ce qui a été facturé, pas sur les commandes passées. Une commande
- * annulée ou pas encore facturée ne contribue donc pas ; une commande
- * partiellement facturée contribue à hauteur du facturé.
- * REPLI historique : utilisé seulement si le référentiel rfa_rates est vide
- * pour ce client (voir fetchReferencingCommissionFromRfa ci-dessus).
- * Renvoie null tant qu'aucun taux n'est configuré.
+ * Taux de commission (€/carton) porté par le champ NetSuite libre `fieldId`
+ * sur la fiche article, pour un jeu de références donné. Utilisé par
+ * lib/commissionsXlsx.ts pour afficher le même taux que celui utilisé dans
+ * le calcul du rapport (fetchReferencingCommissionUnified ci-dessus).
  */
-export async function fetchReferencingCommission(
-  parentId: number,
-  dateFrom: string,
-  dateTo: string,
-  commissionRates: Record<string, number> | null | undefined
-): Promise<number | null> {
-  if (!commissionRates || Object.keys(commissionRates).length === 0) return null;
-  const toExcl = nextDay(dateTo);
-  const rows = await suiteql<{ itemid: string; total_ht: number }>(
-    `SELECT i.itemid AS itemid,
-            SUM(CASE WHEN til.taxline = 'F' AND til.mainline = 'F' THEN -til.foreignamount ELSE 0 END) AS total_ht
-     FROM transaction so
-     JOIN transactionline til ON til.createdfrom = so.id
-     JOIN transaction inv ON inv.id = til.transaction
-     JOIN item i ON i.id = til.item
-     WHERE so.type = 'SalesOrd'
-       AND inv.type = 'CustInvc'
-       AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
-       AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
-       AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
-     GROUP BY i.itemid`
+export async function fetchItemFieldRates(
+  itemCodes: string[],
+  fieldId: string | null | undefined
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const safeFieldId = fieldId && /^custitem[a-z0-9_]*$/i.test(fieldId) ? fieldId : null;
+  if (!safeFieldId || itemCodes.length === 0) return out;
+  const list = itemCodes.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(", ");
+  const rows = await suiteql<{ itemid: string; rate: number | null }>(
+    `SELECT itemid, ${safeFieldId} AS rate FROM item WHERE itemid IN (${list})`
   );
-  let commission = 0;
-  let matched = false;
   for (const r of rows) {
-    const rate = commissionRates[String(r.itemid).toUpperCase()] ?? commissionRates[String(r.itemid)];
-    if (rate !== undefined) {
-      matched = true;
-      commission += Number(r.total_ht) * Number(rate);
-    }
+    const v = r.rate !== null && r.rate !== undefined ? Number(r.rate) : null;
+    if (v !== null && Number.isFinite(v) && v > 0) out.set(String(r.itemid).trim().toUpperCase(), v);
   }
-  return matched ? Math.round(commission * 100) / 100 : null;
+  return out;
 }

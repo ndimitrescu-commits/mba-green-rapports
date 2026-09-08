@@ -34,3 +34,5 @@ yarn-error.log*
 
 # temp files
 /tmp/
+next-env.d.ts
+tsconfig.tsbuildinfo

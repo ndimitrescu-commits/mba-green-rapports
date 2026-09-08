@@ -5,13 +5,16 @@
  * "Commissions {Client} {Mois}" préparé jusqu'ici à la main par Heather) :
  *   - onglet "Ventes {Mois}" : le détail des lignes de factures liées aux
  *     commandes du mois (base "facturé uniquement", la même que le rapport) ;
- *   - onglet "RFAs" : colis facturés par référence x taux du référentiel
- *     Supabase rfa_rates (€/colis ou % du CA HT), avec formules et total.
+ *   - onglet "RFAs" : colis facturés par référence x taux — champ NetSuite
+ *     libre €/carton en priorité (décision Nicolas, 08/09/2026), repli par
+ *     référence sur l'ancien référentiel Supabase rfa_rates (€/colis ou %
+ *     du CA HT) tant que le champ n'est pas encore rempli — avec formules
+ *     et total.
  * Le total de l'onglet RFAs est par construction identique à la
  * "Commission à payer - référencement" du rapport PDF généré au même moment.
  */
 import * as XLSX from "xlsx";
-import { suiteql } from "./netsuiteFinancials";
+import { suiteql, fetchItemFieldRates } from "./netsuiteFinancials";
 import { readRfaRatesForCalc, type RfaRate } from "./rfaRates";
 import { loadClientConfig, parseMonthLabel } from "./compute";
 
@@ -126,21 +129,30 @@ export async function buildCommissionsXlsx(
   }
   const refs = [...byRef.keys()].sort();
 
+  // Taux prioritaire : champ NetSuite libre (€/carton, décision Nicolas
+  // 08/09/2026) ; repli par référence sur l'ancien référentiel Supabase
+  // rfa_rates tant que le champ n'est pas encore rempli pour ce SKU.
+  const nsRates = await fetchItemFieldRates(refs, process.env.NETSUITE_COMMISSION_FIELD_ID);
+
   interface RfaLine {
     ref: string;
     colis: number;
     ht: number;
     rate: number | null;
-    mode: "€/colis" | "% CA HT" | "sans taux";
+    mode: "€/carton (NetSuite)" | "€/colis (legacy)" | "% CA HT (legacy)" | "sans taux";
   }
   const rfaLines: RfaLine[] = refs.map((ref) => {
     const agg = byRef.get(ref)!;
+    const nsRate = nsRates.get(ref);
+    if (nsRate !== undefined) {
+      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: nsRate, mode: "€/carton (NetSuite)" };
+    }
     const rate = rfaByRef.get(ref);
     if (rate && rate.rfa_par_colis !== null && rate.rfa_par_colis !== undefined) {
-      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: Number(rate.rfa_par_colis), mode: "€/colis" };
+      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: Number(rate.rfa_par_colis), mode: "€/colis (legacy)" };
     }
     if (rate && rate.commission_pct !== null && rate.commission_pct !== undefined) {
-      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: Number(rate.commission_pct), mode: "% CA HT" };
+      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: Number(rate.commission_pct), mode: "% CA HT (legacy)" };
     }
     return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: null, mode: "sans taux" };
   });
@@ -148,7 +160,7 @@ export async function buildCommissionsXlsx(
   let totalCommission: number | null = null;
   for (const l of rfaLines) {
     if (l.rate === null) continue;
-    const c = l.mode === "€/colis" ? l.colis * l.rate : l.ht * l.rate;
+    const c = l.mode === "% CA HT (legacy)" ? l.ht * l.rate : l.colis * l.rate;
     totalCommission = (totalCommission ?? 0) + c;
   }
   if (totalCommission !== null) totalCommission = r2(totalCommission);
@@ -180,7 +192,7 @@ export async function buildCommissionsXlsx(
     if (l.rate !== null) {
       wsRfa[`F${row}`] = {
         t: "n",
-        f: l.mode === "€/colis" ? `B${row}*D${row}` : `C${row}*D${row}`,
+        f: l.mode === "% CA HT (legacy)" ? `C${row}*D${row}` : `B${row}*D${row}`,
       };
     }
   });
