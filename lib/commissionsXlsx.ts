@@ -6,16 +6,14 @@
  *   - onglet "Ventes {Mois}" : le détail des lignes de factures liées aux
  *     commandes du mois (base "facturé uniquement", la même que le rapport) ;
  *   - onglet "RFAs" : colis facturés par référence x taux — champ NetSuite
- *     libre €/carton en priorité (décision Nicolas, 08/09/2026), repli par
- *     référence sur l'ancien référentiel Supabase rfa_rates (€/colis ou %
- *     du CA HT) tant que le champ n'est pas encore rempli — avec formules
- *     et total.
+ *     libre €/carton, source unique (décision Nicolas, 08/09/2026 : plus de
+ *     repli sur l'ancien référentiel Supabase rfa_rates) — avec formules et
+ *     total.
  * Le total de l'onglet RFAs est par construction identique à la
  * "Commission à payer - référencement" du rapport PDF généré au même moment.
  */
 import * as XLSX from "xlsx";
 import { suiteql, fetchItemFieldRates } from "./netsuiteFinancials";
-import { readRfaRatesForCalc, type RfaRate } from "./rfaRates";
 import { loadClientConfig, parseMonthLabel } from "./compute";
 
 interface InvoicedLine {
@@ -86,13 +84,7 @@ export async function buildCommissionsXlsx(
 ): Promise<{ buffer: Buffer; filename: string; totalCommission: number | null }> {
   const cfg = loadClientConfig(clientKey);
   const month = parseMonthLabel(monthLabel);
-  const [lines, rfaRates] = await Promise.all([
-    fetchInvoicedLines(cfg.netsuite_parent_id, month.dateFrom, month.dateTo),
-    readRfaRatesForCalc(clientKey),
-  ]);
-
-  const rfaByRef = new Map<string, RfaRate>();
-  for (const r of rfaRates ?? []) rfaByRef.set(r.reference.trim().toUpperCase(), r);
+  const lines = await fetchInvoicedLines(cfg.netsuite_parent_id, month.dateFrom, month.dateTo);
 
   // ------------------------------------------------------------------ ventes
   const ventes = lines.map((l) => {
@@ -129,9 +121,8 @@ export async function buildCommissionsXlsx(
   }
   const refs = [...byRef.keys()].sort();
 
-  // Taux prioritaire : champ NetSuite libre (€/carton, décision Nicolas
-  // 08/09/2026) ; repli par référence sur l'ancien référentiel Supabase
-  // rfa_rates tant que le champ n'est pas encore rempli pour ce SKU.
+  // Taux : champ NetSuite libre (€/carton), source unique (décision Nicolas
+  // 08/09/2026 : plus de repli sur l'ancien référentiel Supabase rfa_rates).
   const nsRates = await fetchItemFieldRates(refs, process.env.NETSUITE_COMMISSION_FIELD_ID);
 
   interface RfaLine {
@@ -139,7 +130,7 @@ export async function buildCommissionsXlsx(
     colis: number;
     ht: number;
     rate: number | null;
-    mode: "€/carton (NetSuite)" | "€/colis (legacy)" | "% CA HT (legacy)" | "sans taux";
+    mode: "€/carton (NetSuite)" | "sans taux";
   }
   const rfaLines: RfaLine[] = refs.map((ref) => {
     const agg = byRef.get(ref)!;
@@ -147,21 +138,13 @@ export async function buildCommissionsXlsx(
     if (nsRate !== undefined) {
       return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: nsRate, mode: "€/carton (NetSuite)" };
     }
-    const rate = rfaByRef.get(ref);
-    if (rate && rate.rfa_par_colis !== null && rate.rfa_par_colis !== undefined) {
-      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: Number(rate.rfa_par_colis), mode: "€/colis (legacy)" };
-    }
-    if (rate && rate.commission_pct !== null && rate.commission_pct !== undefined) {
-      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: Number(rate.commission_pct), mode: "% CA HT (legacy)" };
-    }
     return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: null, mode: "sans taux" };
   });
 
   let totalCommission: number | null = null;
   for (const l of rfaLines) {
     if (l.rate === null) continue;
-    const c = l.mode === "% CA HT (legacy)" ? l.ht * l.rate : l.colis * l.rate;
-    totalCommission = (totalCommission ?? 0) + c;
+    totalCommission = (totalCommission ?? 0) + l.colis * l.rate;
   }
   if (totalCommission !== null) totalCommission = r2(totalCommission);
 
@@ -190,10 +173,7 @@ export async function buildCommissionsXlsx(
   rfaLines.forEach((l, i) => {
     const row = i + 2; // 1-based, après l'en-tête
     if (l.rate !== null) {
-      wsRfa[`F${row}`] = {
-        t: "n",
-        f: l.mode === "% CA HT (legacy)" ? `C${row}*D${row}` : `B${row}*D${row}`,
-      };
+      wsRfa[`F${row}`] = { t: "n", f: `B${row}*D${row}` };
     }
   });
   const totalRow = rfaLines.length + 3;

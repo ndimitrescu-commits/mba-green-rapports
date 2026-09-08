@@ -267,24 +267,20 @@ async function fetchInvoicedByItem(
 
 /**
  * Commission de référencement — décision Nicolas (08/09/2026) : source
- * primaire = champ NetSuite libre `fieldId` sur la fiche article (€/carton),
+ * UNIQUE = champ NetSuite libre `fieldId` sur la fiche article (€/carton),
  * multiplié par les cartons FACTURÉS du mois (même base "facturé
- * uniquement" que le reste du rapport). Tant que ce champ n'est pas encore
- * renseigné pour un article donné, repli sur l'ancien référentiel Supabase
- * `rfa_rates` (€/colis ou % CA HT, onglet /rfa) pour cet article précis —
- * filet de sécurité pendant la bascule, à retirer une fois le champ NetSuite
- * entièrement rempli. Renvoie aussi la liste des références facturées sans
- * AUCUN taux (ni champ NetSuite ni rfa_rates), pour signalement.
+ * uniquement" que le reste du rapport). Plus de repli sur l'ancien
+ * référentiel Supabase `rfa_rates` (décision Nicolas, 08/09/2026 : "pas de
+ * repli", cet ancien référentiel doit disparaître). Renvoie aussi la liste
+ * des références facturées sans taux NetSuite renseigné, pour signalement.
  */
 export async function fetchReferencingCommissionUnified(
   parentId: number,
   dateFrom: string,
   dateTo: string,
-  fieldId: string | null | undefined,
-  rfaRates: { reference: string; rfa_par_colis: number | null; commission_pct: number | null }[] | null | undefined
+  fieldId: string | null | undefined
 ): Promise<{ commission: number | null; missingRate: string[] }> {
   const rows = await fetchInvoicedByItem(parentId, dateFrom, dateTo, fieldId ?? null);
-  const byRef = new Map((rfaRates ?? []).map((r) => [r.reference.trim().toUpperCase(), r]));
   let commission = 0;
   let matched = false;
   const missingRate: string[] = [];
@@ -295,15 +291,6 @@ export async function fetchReferencingCommissionUnified(
     if (nsRate !== null && Number.isFinite(nsRate) && nsRate > 0) {
       matched = true;
       commission += cartons * nsRate;
-      continue;
-    }
-    const legacy = byRef.get(String(row.itemid).trim().toUpperCase());
-    if (legacy?.rfa_par_colis !== null && legacy?.rfa_par_colis !== undefined) {
-      matched = true;
-      commission += cartons * Number(legacy.rfa_par_colis);
-    } else if (legacy?.commission_pct !== null && legacy?.commission_pct !== undefined) {
-      matched = true;
-      commission += (Number(row.total_ht) || 0) * Number(legacy.commission_pct);
     } else {
       missingRate.push(String(row.itemid));
     }

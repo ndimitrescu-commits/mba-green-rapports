@@ -24,7 +24,6 @@ import {
   fetchReferencingCommissionUnified,
 } from "./netsuiteFinancials";
 import { readForecastFromDb } from "./forecastsDb";
-import { readRfaRatesForCalc } from "./rfaRates";
 import {
   hasForecastTab,
   readForecast,
@@ -387,14 +386,14 @@ export async function buildReportContext(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  // Champ NetSuite €/carton (prioritaire, décision Nicolas 08/09/2026) +
-  // référentiel Supabase rfa_rates (repli par référence tant que le champ
-  // NetSuite n'est pas encore rempli pour tous les SKU). L'échec ne bloque
-  // pas la génération : commission à "-" plutôt qu'un rapport en erreur.
-  const [forecastRows, rfaRates] = await Promise.all([
-    safe("Prévisions (Supabase/Sheets)", readForecastRows(clientKey, cfg), [] as ForecastRow[]),
-    safe("Taux RFA (Supabase, repli)", readRfaRatesForCalc(clientKey), null),
-  ]);
+  // Champ NetSuite €/carton — source unique (décision Nicolas 08/09/2026,
+  // "pas de repli" : plus de référentiel Supabase rfa_rates). L'échec ne
+  // bloque pas la génération : commission à "-" plutôt qu'un rapport en erreur.
+  const forecastRows = await safe(
+    "Prévisions (Supabase/Sheets)",
+    readForecastRows(clientKey, cfg),
+    [] as ForecastRow[]
+  );
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
     buildArticles(clientKey, cfg, parsedMonth, forecastRows),
@@ -410,8 +409,7 @@ export async function buildReportContext(
         cfg.netsuite_parent_id,
         parsedMonth.dateFrom,
         parsedMonth.dateTo,
-        process.env.NETSUITE_COMMISSION_FIELD_ID,
-        rfaRates
+        process.env.NETSUITE_COMMISSION_FIELD_ID
       ).then((r) => r.commission),
       null
     ),
@@ -420,9 +418,9 @@ export async function buildReportContext(
   let gls = parsers.parseGls(files.gls, cfg);
   // "RFAs / Commissions" (= "Commission à payer - référencement") is
   // computed from billed cartons x the NetSuite item field's €/carton rate
-  // (repli rfa_rates par référence) -- see fetchReferencingCommissionUnified.
-  // Null (no rate at all for any invoiced reference) is treated as "not
-  // available" and the key is simply omitted, so dget() falls back to "-".
+  // -- see fetchReferencingCommissionUnified. Null (no NetSuite rate at all
+  // for any invoiced reference) is treated as "not available" and the key
+  // is simply omitted, so dget() falls back to "-".
   // "RFAs / Commissions PGK" (stock PKG) still has no known source
   // (confirmed by Nicolas) and is deliberately never set here.
   const fin: Record<string, unknown> = {
@@ -570,14 +568,14 @@ export async function buildReportContextWithLogistics(
 ): Promise<ReportContext> {
   const cfg = loadClientConfig(clientKey);
   const parsedMonth = parseMonthLabel(monthLabel);
-  // Champ NetSuite €/carton (prioritaire, décision Nicolas 08/09/2026) +
-  // référentiel Supabase rfa_rates (repli par référence tant que le champ
-  // NetSuite n'est pas encore rempli pour tous les SKU). L'échec ne bloque
-  // pas la génération : commission à "-" plutôt qu'un rapport en erreur.
-  const [forecastRows, rfaRates] = await Promise.all([
-    safe("Prévisions (Supabase/Sheets)", readForecastRows(clientKey, cfg), [] as ForecastRow[]),
-    safe("Taux RFA (Supabase, repli)", readRfaRatesForCalc(clientKey), null),
-  ]);
+  // Champ NetSuite €/carton — source unique (décision Nicolas 08/09/2026,
+  // "pas de repli" : plus de référentiel Supabase rfa_rates). L'échec ne
+  // bloque pas la génération : commission à "-" plutôt qu'un rapport en erreur.
+  const forecastRows = await safe(
+    "Prévisions (Supabase/Sheets)",
+    readForecastRows(clientKey, cfg),
+    [] as ForecastRow[]
+  );
 
   const [articles, stockStatus, finData, referencingCommission] = await Promise.all([
     buildArticles(clientKey, cfg, parsedMonth, forecastRows),
@@ -593,8 +591,7 @@ export async function buildReportContextWithLogistics(
         cfg.netsuite_parent_id,
         parsedMonth.dateFrom,
         parsedMonth.dateTo,
-        process.env.NETSUITE_COMMISSION_FIELD_ID,
-        rfaRates
+        process.env.NETSUITE_COMMISSION_FIELD_ID
       ).then((r) => r.commission),
       null
     ),
