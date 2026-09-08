@@ -229,20 +229,24 @@ async function fetchInvoicedByItem(
   dateFrom: string,
   dateTo: string,
   fieldId?: string | null
-): Promise<{ itemid: string; qty_pieces: number; per_carton: number; total_ht: number; ns_rate: number | null }[]> {
+): Promise<
+  { item_id: number; itemid: string; qty_pieces: number; per_carton: number; total_ht: number; ns_rate: number | null }[]
+> {
   const toExcl = nextDay(dateTo);
   // fieldId vient d'une variable d'environnement qu'on contrôle (jamais
   // d'entrée utilisateur) — on valide quand même le format d'un ID de champ
   // custitem NetSuite avant de l'interpoler dans le SELECT.
   const safeFieldId = fieldId && /^custitem[a-z0-9_]*$/i.test(fieldId) ? fieldId : null;
   const rows = await suiteql<{
+    item_id: number;
     itemid: string;
     qty_pieces: number;
     per_carton: number;
     total_ht: number;
     ns_rate: number | null;
   }>(
-    `SELECT i.itemid AS itemid,
+    `SELECT i.id AS item_id,
+            i.itemid AS itemid,
             SUM(-til.quantity) AS qty_pieces,
             MAX(NVL(u.conversionrate, 1)) AS per_carton,
             SUM(CASE WHEN til.taxline = 'F' AND til.mainline = 'F' THEN -til.foreignamount ELSE 0 END) AS total_ht
@@ -260,19 +264,55 @@ async function fetchInvoicedByItem(
        AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
        AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
        AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
-     GROUP BY i.itemid`
+     GROUP BY i.id, i.itemid`
   );
   return rows;
 }
 
 /**
+ * Table d'exceptions de commission par client (custom record NetSuite
+ * "Commission par client (MBA)", customrecordmba_commission_client — décision
+ * Nicolas, 08/09/2026) : cas où la même référence a un taux de commission
+ * différent selon le client (ex. LID149PP, WDFK02PO). Consultée en priorité,
+ * avant le champ général custitem_mba_commission_carton. Une valeur 0 est un
+ * taux explicite (pas de commission pour ce client sur cette référence), à
+ * distinguer d'une absence de ligne (on retombe alors sur le champ général).
+ * Le "Client" de la table d'exceptions est le client parent NetSuite
+ * (parentId — même valeur que clients.json:netsuite_parent_id).
+ */
+async function fetchClientExceptionRates(parentId: number): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  try {
+    const rows = await suiteql<{ item_id: number; rate: number }>(
+      `SELECT custrecordmba_comm_article AS item_id, custrecordmba_comm_rate AS rate
+       FROM customrecordmba_commission_client
+       WHERE custrecordmba_comm_client = ${Number(parentId)}`
+    );
+    for (const r of rows) {
+      if (r.item_id !== null && r.item_id !== undefined) {
+        out.set(Number(r.item_id), Number(r.rate));
+      }
+    }
+  } catch {
+    // Table d'exceptions indisponible (ex. pas encore créée) : on retombe
+    // silencieusement sur le champ général custitem_mba_commission_carton.
+  }
+  return out;
+}
+
+/**
  * Commission de référencement — décision Nicolas (08/09/2026) : source
- * UNIQUE = champ NetSuite libre `fieldId` sur la fiche article (€/carton),
- * multiplié par les cartons FACTURÉS du mois (même base "facturé
- * uniquement" que le reste du rapport). Plus de repli sur l'ancien
+ * PRINCIPALE = champ NetSuite libre `fieldId` sur la fiche article
+ * (€/carton), multiplié par les cartons FACTURÉS du mois (même base
+ * "facturé uniquement" que le reste du rapport). Plus de repli sur l'ancien
  * référentiel Supabase `rfa_rates` (décision Nicolas, 08/09/2026 : "pas de
- * repli", cet ancien référentiel doit disparaître). Renvoie aussi la liste
- * des références facturées sans taux NetSuite renseigné, pour signalement.
+ * repli", cet ancien référentiel doit disparaître).
+ * Décision Nicolas (08/09/2026, cas LID149PP / WDFK02PO) : quand une même
+ * référence a un taux différent selon le client, la table d'exceptions
+ * NetSuite "Commission par client (MBA)" (fetchClientExceptionRates) est
+ * consultée EN PRIORITÉ, avant le champ général — cas normalement rares.
+ * Renvoie aussi la liste des références facturées sans taux (exception ou
+ * NetSuite) renseigné, pour signalement.
  */
 export async function fetchReferencingCommissionUnified(
   parentId: number,
@@ -280,13 +320,22 @@ export async function fetchReferencingCommissionUnified(
   dateTo: string,
   fieldId: string | null | undefined
 ): Promise<{ commission: number | null; missingRate: string[] }> {
-  const rows = await fetchInvoicedByItem(parentId, dateFrom, dateTo, fieldId ?? null);
+  const [rows, exceptions] = await Promise.all([
+    fetchInvoicedByItem(parentId, dateFrom, dateTo, fieldId ?? null),
+    fetchClientExceptionRates(parentId),
+  ]);
   let commission = 0;
   let matched = false;
   const missingRate: string[] = [];
   for (const row of rows) {
     const perCarton = Number(row.per_carton) > 0 ? Number(row.per_carton) : 1;
     const cartons = (Number(row.qty_pieces) || 0) / perCarton;
+    const exceptionRate = exceptions.get(Number(row.item_id));
+    if (exceptionRate !== undefined && Number.isFinite(exceptionRate)) {
+      matched = true;
+      commission += cartons * exceptionRate;
+      continue;
+    }
     const nsRate = row.ns_rate !== null && row.ns_rate !== undefined ? Number(row.ns_rate) : null;
     if (nsRate !== null && Number.isFinite(nsRate) && nsRate > 0) {
       matched = true;
@@ -299,25 +348,38 @@ export async function fetchReferencingCommissionUnified(
 }
 
 /**
- * Taux de commission (€/carton) porté par le champ NetSuite libre `fieldId`
- * sur la fiche article, pour un jeu de références donné. Utilisé par
- * lib/commissionsXlsx.ts pour afficher le même taux que celui utilisé dans
- * le calcul du rapport (fetchReferencingCommissionUnified ci-dessus).
+ * Taux de commission (€/carton) pour un jeu de références données, pour un
+ * client donné (`parentId`) : table d'exceptions par client en priorité
+ * (fetchClientExceptionRates), sinon champ NetSuite libre `fieldId` sur la
+ * fiche article. Utilisé par lib/commissionsXlsx.ts pour afficher le même
+ * taux que celui utilisé dans le calcul du rapport
+ * (fetchReferencingCommissionUnified ci-dessus). `source` indique l'origine
+ * du taux affiché ("exception client" vs "NetSuite").
  */
 export async function fetchItemFieldRates(
+  parentId: number,
   itemCodes: string[],
   fieldId: string | null | undefined
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, { rate: number; source: "exception" | "netsuite" }>> {
+  const out = new Map<string, { rate: number; source: "exception" | "netsuite" }>();
+  if (itemCodes.length === 0) return out;
   const safeFieldId = fieldId && /^custitem[a-z0-9_]*$/i.test(fieldId) ? fieldId : null;
-  if (!safeFieldId || itemCodes.length === 0) return out;
   const list = itemCodes.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(", ");
-  const rows = await suiteql<{ itemid: string; rate: number | null }>(
-    `SELECT itemid, ${safeFieldId} AS rate FROM item WHERE itemid IN (${list})`
-  );
+  const [rows, exceptions] = await Promise.all([
+    suiteql<{ id: number; itemid: string; rate: number | null }>(
+      `SELECT id${safeFieldId ? `, ${safeFieldId} AS rate` : ""}, itemid FROM item WHERE itemid IN (${list})`
+    ),
+    fetchClientExceptionRates(parentId),
+  ]);
   for (const r of rows) {
+    const key = String(r.itemid).trim().toUpperCase();
+    const exceptionRate = exceptions.get(Number(r.id));
+    if (exceptionRate !== undefined && Number.isFinite(exceptionRate)) {
+      out.set(key, { rate: exceptionRate, source: "exception" });
+      continue;
+    }
     const v = r.rate !== null && r.rate !== undefined ? Number(r.rate) : null;
-    if (v !== null && Number.isFinite(v) && v > 0) out.set(String(r.itemid).trim().toUpperCase(), v);
+    if (v !== null && Number.isFinite(v) && v > 0) out.set(key, { rate: v, source: "netsuite" });
   }
   return out;
 }

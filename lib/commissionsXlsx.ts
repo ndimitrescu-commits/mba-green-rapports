@@ -5,10 +5,10 @@
  * "Commissions {Client} {Mois}" préparé jusqu'ici à la main par Heather) :
  *   - onglet "Ventes {Mois}" : le détail des lignes de factures liées aux
  *     commandes du mois (base "facturé uniquement", la même que le rapport) ;
- *   - onglet "RFAs" : colis facturés par référence x taux — champ NetSuite
- *     libre €/carton, source unique (décision Nicolas, 08/09/2026 : plus de
- *     repli sur l'ancien référentiel Supabase rfa_rates) — avec formules et
- *     total.
+ *   - onglet "RFAs" : colis facturés par référence x taux — table
+ *     d'exceptions par client en priorité, sinon champ NetSuite libre
+ *     €/carton (décision Nicolas, 08/09/2026 : plus de repli sur l'ancien
+ *     référentiel Supabase rfa_rates) — avec formules et total.
  * Le total de l'onglet RFAs est par construction identique à la
  * "Commission à payer - référencement" du rapport PDF généré au même moment.
  */
@@ -121,22 +121,25 @@ export async function buildCommissionsXlsx(
   }
   const refs = [...byRef.keys()].sort();
 
-  // Taux : champ NetSuite libre (€/carton), source unique (décision Nicolas
-  // 08/09/2026 : plus de repli sur l'ancien référentiel Supabase rfa_rates).
-  const nsRates = await fetchItemFieldRates(refs, process.env.NETSUITE_COMMISSION_FIELD_ID);
+  // Taux : table d'exceptions par client en priorité, sinon champ NetSuite
+  // libre (€/carton) — décision Nicolas 08/09/2026 : plus de repli sur
+  // l'ancien référentiel Supabase rfa_rates ; cas LID149PP/WDFK02PO (taux
+  // différent selon le client) couverts par la table d'exceptions.
+  const nsRates = await fetchItemFieldRates(cfg.netsuite_parent_id, refs, process.env.NETSUITE_COMMISSION_FIELD_ID);
 
   interface RfaLine {
     ref: string;
     colis: number;
     ht: number;
     rate: number | null;
-    mode: "€/carton (NetSuite)" | "sans taux";
+    mode: "€/carton (NetSuite)" | "€/carton (exception client)" | "sans taux";
   }
   const rfaLines: RfaLine[] = refs.map((ref) => {
     const agg = byRef.get(ref)!;
-    const nsRate = nsRates.get(ref);
-    if (nsRate !== undefined) {
-      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: nsRate, mode: "€/carton (NetSuite)" };
+    const found = nsRates.get(ref);
+    if (found !== undefined) {
+      const mode = found.source === "exception" ? "€/carton (exception client)" : "€/carton (NetSuite)";
+      return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: found.rate, mode };
     }
     return { ref, colis: r2(agg.colis), ht: r2(agg.ht), rate: null, mode: "sans taux" };
   });
