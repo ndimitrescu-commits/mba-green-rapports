@@ -62,25 +62,22 @@ function formatUpdatedAt(iso: string): string {
 }
 
 export default function PrevisionPage() {
-  const [password, setPassword] = useState("");
-  const [authed, setAuthed] = useState(false);
   const [clientKey, setClientKey] = useState(ALL_KEY);
   const [cells, setCells] = useState<Map<string, number>>(new Map());
   const [refs, setRefs] = useState<string[]>([]);
   const [months, setMonths] = useState<string[]>([]);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const load = useCallback(async (pw: string, ck: string) => {
+  const load = useCallback(async (ck: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/prevision?client=${encodeURIComponent(ck)}`, {
-        headers: { "x-admin-password": pw },
-      });
+      const res = await fetch(`/api/prevision?client=${encodeURIComponent(ck)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Erreur de chargement.");
       const rows = (data.rows ?? []) as DbRow[];
@@ -94,16 +91,19 @@ export default function PrevisionPage() {
       setRefs([...new Set(rows.map((r) => r.reference))].sort());
       setMonths([...new Set(rows.map((r) => r.month))].sort());
       setLastUpdated(maxUpdated || null);
-      setAuthed(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
   }, []);
 
+  // Plus de mot de passe par onglet (décision Nicolas, 09/09/2026) : le
+  // cookie posé une fois via /login (middleware.ts) couvre déjà cette page
+  // — on charge directement au montage et à chaque changement de client.
   useEffect(() => {
-    if (authed) void load(password, clientKey);
+    void load(clientKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientKey]);
 
@@ -118,17 +118,14 @@ export default function PrevisionPage() {
     setError(null);
     setInfo(null);
     try {
-      const res = await fetch("/api/prevision/import", {
-        method: "POST",
-        headers: { "x-admin-password": password },
-      });
+      const res = await fetch("/api/prevision/import", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Erreur d'import.");
       const summary = Object.entries(data.results as Record<string, number | string>)
         .map(([k, v]) => `${k} : ${typeof v === "number" ? `${v} lignes` : v}`)
         .join(" · ");
       setInfo(`Import terminé — ${summary}`);
-      await load(password, clientKey);
+      await load(clientKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -174,26 +171,8 @@ export default function PrevisionPage() {
             </div>
           )}
 
-          {!authed ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void load(password, clientKey);
-              }}
-              style={{ display: "flex", gap: 12, alignItems: "center", maxWidth: 420 }}
-            >
-              <input
-                type="password"
-                placeholder="Mot de passe admin"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ ...inputStyle, fontSize: 14, padding: "10px 12px" }}
-                autoFocus
-              />
-              <button type="submit" disabled={loading || !password} style={{ ...buttonPrimary(loading || !password), padding: "10px 22px", fontSize: 14 }}>
-                {loading ? "…" : "Entrer"}
-              </button>
-            </form>
+          {!loaded && loading ? (
+            <div style={{ padding: 16, color: theme.inkMuted, fontSize: 13 }}>Chargement…</div>
           ) : (
             <>
               <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>

@@ -17,15 +17,12 @@ import { hasForecastTab, readForecast } from "@/lib/googleSheets";
 import { fetchCatalogPriceByCarton } from "@/lib/netsuiteData";
 import { bulkUpsertForecasts } from "@/lib/forecastsDb";
 import { getClientsConfig } from "@/lib/compute";
-import { checkAdminAuth } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
-  const auth = checkAdminAuth(req);
-  if (auth) return auth;
   try {
     const only = req.nextUrl.searchParams.get("client");
     const clients = getClientsConfig();

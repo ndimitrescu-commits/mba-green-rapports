@@ -32,7 +32,6 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [withCommissions, setWithCommissions] = useState(true);
-  const [adminPassword, setAdminPassword] = useState("");
   const [lastClientLabel, setLastClientLabel] = useState<string | null>(null);
   const [gaps, setGaps] = useState<MultiClientGap[] | null>(null);
 
@@ -98,8 +97,7 @@ export default function HomePage() {
         const monthLabel = String(formData.get("month_label") ?? "");
         setLastClientLabel(CLIENTS[clientKey]?.display_name ?? clientKey);
         const resX = await fetch(
-          `/api/commissions?client=${encodeURIComponent(clientKey)}&month_label=${encodeURIComponent(monthLabel)}`,
-          { headers: { "x-admin-password": adminPassword } }
+          `/api/commissions?client=${encodeURIComponent(clientKey)}&month_label=${encodeURIComponent(monthLabel)}`
         );
         if (!resX.ok) {
           let msg = "Le rapport PDF est généré, mais le fichier commissions a échoué.";
@@ -240,20 +238,10 @@ export default function HomePage() {
               Générer aussi le fichier commissions (xlsx)
             </label>
             {withCommissions && (
-              <>
-                <input
-                  type="password"
-                  placeholder="Mot de passe admin (onglets RFAs / Prévisionnel)"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  style={{ ...input, marginBottom: 8 }}
-                  required
-                />
-                <div style={{ fontSize: 12, color: theme.inkMuted, marginBottom: 4 }}>
-                  Détail des factures du mois + commissions par référence (taux RFAs) — mêmes
-                  chiffres que le rapport, base « facturé uniquement ».
-                </div>
-              </>
+              <div style={{ fontSize: 12, color: theme.inkMuted, marginBottom: 4 }}>
+                Détail des factures du mois + commissions par référence (taux RFAs) — mêmes
+                chiffres que le rapport, base « facturé uniquement ».
+              </div>
             )}
 
             <button

@@ -5,8 +5,10 @@
  * client — décision Nicolas (09/09/2026). Ancien CRUD retiré : la table
  * Supabase `rfa_rates` qu'il éditait n'est plus lue par aucun calcul depuis
  * le passage sur NetSuite (champ général custitem + table d'exceptions
- * "Commission par client (MBA)"). Mot de passe admin conservé : les taux
- * révèlent les marges.
+ * "Commission par client (MBA)"). Protégé par le mot de passe global de
+ * l'outil (middleware.ts) plutôt que par onglet (décision Nicolas,
+ * 09/09/2026) : les taux révèlent les marges, mais un seul mot de passe à
+ * l'entrée suffit.
  *
  * Références couvertes = celles du Prévisionnel de ce client (remarque
  * Nicolas, 09/09/2026 : "la mercuriale correspond exactement aux références
@@ -27,17 +29,6 @@ type ClientsConfig = Record<string, { netsuite_parent_id: number }>;
 const CLIENTS = clientsConfig as ClientsConfig;
 
 export async function GET(req: NextRequest) {
-  const expected = process.env.RFA_ADMIN_PASSWORD;
-  if (!expected) {
-    return NextResponse.json(
-      { error: "RFA_ADMIN_PASSWORD n'est pas configuré sur le serveur (variable d'environnement Vercel)." },
-      { status: 500 }
-    );
-  }
-  if (req.headers.get("x-rfa-password") !== expected) {
-    return NextResponse.json({ error: "Mot de passe incorrect." }, { status: 401 });
-  }
-
   const clientKey = req.nextUrl.searchParams.get("client") ?? "";
   const cfg = CLIENTS[clientKey];
   if (!cfg) {

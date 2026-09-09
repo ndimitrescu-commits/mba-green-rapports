@@ -3,20 +3,18 @@
  * ============================
  * Téléchargement du fichier de commissions mensuel (xlsx) d'une enseigne —
  * mêmes données et mêmes taux que le rapport PDF (base "facturé uniquement" +
- * référentiel rfa_rates). Protégé par le mot de passe admin : le fichier
- * expose les taux RFA par référence.
+ * champ NetSuite / table d'exceptions). Protégé par le mot de passe global
+ * de l'outil (middleware.ts) : le fichier expose les taux de commission par
+ * référence.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { buildCommissionsXlsx } from "@/lib/commissionsXlsx";
-import { checkAdminAuth } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
-  const auth = checkAdminAuth(req);
-  if (auth) return auth;
   const client = req.nextUrl.searchParams.get("client") ?? "";
   const monthLabel = req.nextUrl.searchParams.get("month_label") ?? "";
   if (!client || !monthLabel) {

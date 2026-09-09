@@ -12,7 +12,7 @@
  * remarque Nicolas 09/09/2026), pas seulement le facturé récent — pour
  * repérer les trous même sur des références pas encore commandées.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import clientsConfig from "@/lib/clients.json";
 import AppHeader from "@/app/components/AppHeader";
 
@@ -42,35 +42,37 @@ const inputStyle: React.CSSProperties = {
 };
 
 export default function RfaPage() {
-  const [password, setPassword] = useState("");
-  const [authed, setAuthed] = useState(false);
   const [clientKey, setClientKey] = useState("KROUSTY");
   const [rows, setRows] = useState<ClientRateRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load(pw: string, ck: string) {
+  const load = useCallback(async (ck: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/rfa?client=${encodeURIComponent(ck)}`, {
-        headers: { "x-rfa-password": pw },
-      });
+      const res = await fetch(`/api/rfa?client=${encodeURIComponent(ck)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Erreur de chargement.");
       setRows(data.rates as ClientRateRow[]);
-      setAuthed(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      if (!authed) setAuthed(false);
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
-  }
+  }, []);
+
+  // Plus de mot de passe par onglet (décision Nicolas, 09/09/2026) : le
+  // cookie posé une fois via /login (middleware.ts) couvre déjà cette page.
+  useEffect(() => {
+    void load(clientKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientKey]);
 
   function changeClient(ck: string) {
     setClientKey(ck);
-    if (authed) void load(password, ck);
   }
 
   const withRate = rows.filter((r) => r.rate !== null);
@@ -113,40 +115,8 @@ export default function RfaPage() {
           </div>
         )}
 
-        {!authed ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void load(password, clientKey);
-            }}
-            style={{ display: "flex", gap: 12, alignItems: "center", maxWidth: 420 }}
-          >
-            <input
-              type="password"
-              placeholder="Mot de passe admin"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={inputStyle}
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={loading || !password}
-              style={{
-                padding: "10px 22px",
-                borderRadius: 8,
-                border: "none",
-                background: "#1B1B16",
-                color: "#fff",
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {loading ? "…" : "Entrer"}
-            </button>
-          </form>
+        {!loaded && loading ? (
+          <div style={{ fontSize: 14, color: "#6B6A5F" }}>Chargement…</div>
         ) : (
           <>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 18 }}>

@@ -3,8 +3,10 @@
  * ==========================
  * CRUD du Prévisionnel client — table Supabase `forecasts`, LA source de
  * référence des rapports (le Google Sheet n'est plus lu à la génération).
- * Protégé par le mot de passe admin (env RFA_ADMIN_PASSWORD, en-tête
- * x-admin-password). Écritures via la clé service, côté serveur uniquement.
+ * Protégé par le mot de passe global de l'outil (middleware.ts, cookie
+ * posé une fois via /login) — plus de mot de passe par onglet (décision
+ * Nicolas, 09/09/2026). Écritures via la clé service, côté serveur
+ * uniquement.
  */
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -13,14 +15,11 @@ import {
   listForecasts,
   upsertForecast,
 } from "@/lib/forecastsDb";
-import { checkAdminAuth } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const auth = checkAdminAuth(req);
-  if (auth) return auth;
   const clientKey = req.nextUrl.searchParams.get("client") ?? "";
   if (!clientKey) return NextResponse.json({ error: "client requis." }, { status: 400 });
   try {
@@ -38,8 +37,6 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = checkAdminAuth(req);
-  if (auth) return auth;
   try {
     const body = (await req.json()) as {
       client: string;
@@ -73,8 +70,6 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const auth = checkAdminAuth(req);
-  if (auth) return auth;
   try {
     const id = req.nextUrl.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "id requis." }, { status: 400 });
