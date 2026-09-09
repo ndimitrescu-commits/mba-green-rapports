@@ -336,8 +336,16 @@ export async function fetchReferencingCommissionUnified(
       commission += cartons * exceptionRate;
       continue;
     }
+    // Une valeur numérique (0 inclus) est un taux réellement renseigné dans
+    // NetSuite — 0 € de commission est une décision valide (ex. articles
+    // promotionnels), à distinguer d'un champ jamais rempli (null). Avant le
+    // 09/09/2026, un 0 était traité comme une absence de taux : ça faisait
+    // remonter à tort des articles à 0 € comme "sans taux" (remarque
+    // Nicolas), et — plus grave — ça pouvait, sur un client n'ayant QUE des
+    // articles à 0 €, faire passer toute la commission à "-" (non calculée)
+    // au lieu de 0.
     const nsRate = row.ns_rate !== null && row.ns_rate !== undefined ? Number(row.ns_rate) : null;
-    if (nsRate !== null && Number.isFinite(nsRate) && nsRate > 0) {
+    if (nsRate !== null && Number.isFinite(nsRate)) {
       matched = true;
       commission += cartons * nsRate;
     } else {
@@ -354,40 +362,47 @@ export interface ClientRateRow {
 }
 
 /**
- * Aperçu lecture-seule des taux réellement appliqués à un client — décision
- * Nicolas (09/09/2026) : l'onglet /rfa n'édite plus rien (l'ancien
- * référentiel Supabase rfa_rates n'est lu par aucun calcul depuis le passage
- * sur NetSuite), il affiche juste ce que le calcul utilise vraiment. Sur les
- * références facturées à ce client sur les `monthsBack` derniers mois :
- * taux d'exception (table "Commission par client (MBA)") si présent, sinon
- * champ général NetSuite sur la fiche article, sinon "aucun".
+ * Taux réellement appliqués à un client, sur un jeu de références donné —
+ * décision Nicolas (09/09/2026) : l'onglet /rfa doit lister TOUTES les
+ * références de la mercuriale du client (en pratique celles du
+ * Prévisionnel — voir app/api/rfa/route.ts), pas seulement celles facturées
+ * récemment, pour repérer les trous même sur des références pas encore
+ * commandées. Taux d'exception (table "Commission par client (MBA)") en
+ * priorité, sinon champ général NetSuite sur la fiche article, sinon
+ * "aucun" (= champ vraiment vide — un 0 explicite est un taux comme un
+ * autre, affiché comme tel).
  */
-export async function fetchClientRatesOverview(
+export async function fetchRatesForReferences(
   parentId: number,
-  fieldId: string | null | undefined,
-  monthsBack = 12
+  itemCodes: string[],
+  fieldId: string | null | undefined
 ): Promise<ClientRateRow[]> {
-  const now = new Date();
-  const dateTo = now.toISOString().slice(0, 10);
-  const from = new Date(now);
-  from.setUTCMonth(from.getUTCMonth() - monthsBack);
-  const dateFrom = from.toISOString().slice(0, 10);
+  if (itemCodes.length === 0) return [];
+  const safeFieldId = fieldId && /^custitem[a-z0-9_]*$/i.test(fieldId) ? fieldId : null;
+  const codes = [...new Set(itemCodes.map((c) => String(c).trim().toUpperCase()))];
+  const list = codes.map((c) => `'${c.replace(/'/g, "''")}'`).join(", ");
 
   const [rows, exceptions] = await Promise.all([
-    fetchInvoicedByItem(parentId, dateFrom, dateTo, fieldId ?? null),
+    suiteql<{ id: number; itemid: string; rate: number | null }>(
+      `SELECT id${safeFieldId ? `, ${safeFieldId} AS rate` : ""}, itemid FROM item WHERE itemid IN (${list})`
+    ),
     fetchClientExceptionRates(parentId),
   ]);
+  const byCode = new Map<string, { id: number; rate: number | null }>();
+  for (const r of rows) byCode.set(String(r.itemid).trim().toUpperCase(), { id: Number(r.id), rate: r.rate ?? null });
 
-  const out: ClientRateRow[] = rows.map((r) => {
-    const exceptionRate = exceptions.get(Number(r.item_id));
+  const out: ClientRateRow[] = codes.map((code) => {
+    const found = byCode.get(code);
+    if (!found) return { ref: code, rate: null, source: "aucun" };
+    const exceptionRate = exceptions.get(found.id);
     if (exceptionRate !== undefined && Number.isFinite(exceptionRate)) {
-      return { ref: r.itemid, rate: exceptionRate, source: "exception" };
+      return { ref: code, rate: exceptionRate, source: "exception" };
     }
-    const nsRate = r.ns_rate !== null && r.ns_rate !== undefined ? Number(r.ns_rate) : null;
-    if (nsRate !== null && Number.isFinite(nsRate) && nsRate > 0) {
-      return { ref: r.itemid, rate: nsRate, source: "netsuite" };
+    const nsRate = found.rate !== null && found.rate !== undefined ? Number(found.rate) : null;
+    if (nsRate !== null && Number.isFinite(nsRate)) {
+      return { ref: code, rate: nsRate, source: "netsuite" };
     }
-    return { ref: r.itemid, rate: null, source: "aucun" };
+    return { ref: code, rate: null, source: "aucun" };
   });
   out.sort((a, b) => a.ref.localeCompare(b.ref));
   return out;
@@ -506,8 +521,11 @@ export async function fetchItemFieldRates(
       out.set(key, { rate: exceptionRate, source: "exception" });
       continue;
     }
+    // 0 est un taux réellement renseigné (voir fetchRatesForReferences) : on
+    // ne l'exclut plus (avant le 09/09/2026, un article à 0 € disparaissait
+    // de la colonne "Taux" du xlsx comme s'il n'avait aucun taux du tout).
     const v = r.rate !== null && r.rate !== undefined ? Number(r.rate) : null;
-    if (v !== null && Number.isFinite(v) && v > 0) out.set(key, { rate: v, source: "netsuite" });
+    if (v !== null && Number.isFinite(v)) out.set(key, { rate: v, source: "netsuite" });
   }
   return out;
 }

@@ -7,6 +7,10 @@
  * "Commission par client (MBA)" pour les exceptions par client — voir le
  * tutoriel). Cette page interroge NetSuite en direct pour montrer ce que le
  * calcul utilise vraiment, référence par référence.
+ *
+ * Références couvertes = la mercuriale du client (déduite du Prévisionnel,
+ * remarque Nicolas 09/09/2026), pas seulement le facturé récent — pour
+ * repérer les trous même sur des références pas encore commandées.
  */
 import { useState } from "react";
 import clientsConfig from "@/lib/clients.json";
@@ -97,8 +101,10 @@ export default function RfaPage() {
         <p style={{ fontSize: 13, color: "#6B6A5F", marginTop: 0, maxWidth: 720 }}>
           Lecture seule — reflète exactement ce qu'utilise le calcul de commission : taux
           d'exception (table « Commission par client (MBA) ») en priorité, sinon champ général
-          NetSuite sur la fiche article. Sur les références facturées à ce client ces 12 derniers
-          mois. Pour modifier un taux, passe par NetSuite (voir le tutoriel de l'équipe).
+          NetSuite sur la fiche article. Sur l&apos;ensemble de la mercuriale de ce client (les
+          références de son Prévisionnel), pas seulement le facturé récent. Un taux à 0 € est
+          affiché comme tel — seul un champ vraiment vide compte comme « aucun taux ». Pour
+          modifier un taux, passe par NetSuite (voir le tutoriel de l&apos;équipe).
         </p>
 
         {error && (
@@ -161,7 +167,8 @@ export default function RfaPage() {
 
             {!loading && rows.length === 0 && (
               <div style={{ fontSize: 14, color: "#6B6A5F" }}>
-                Aucune référence facturée à ce client sur les 12 derniers mois.
+                Aucune référence dans le Prévisionnel de ce client — importe-le d&apos;abord depuis
+                l&apos;onglet Prévisionnel pour voir sa mercuriale ici.
               </div>
             )}
 
@@ -175,9 +182,8 @@ export default function RfaPage() {
                   fontSize: 13,
                 }}
               >
-                ⚠️ {withoutRate.length} référence{withoutRate.length > 1 ? "s" : ""} facturée
-                {withoutRate.length > 1 ? "s" : ""} sans aucun taux (ni exception, ni champ
-                général) : {withoutRate.map((r) => r.ref).join(", ")}.
+                ⚠️ {withoutRate.length} référence{withoutRate.length > 1 ? "s" : ""} de la mercuriale
+                sans aucun taux (ni exception, ni champ général) : {withoutRate.map((r) => r.ref).join(", ")}.
               </div>
             )}
 

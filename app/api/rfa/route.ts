@@ -7,9 +7,17 @@
  * le passage sur NetSuite (champ général custitem + table d'exceptions
  * "Commission par client (MBA)"). Mot de passe admin conservé : les taux
  * révèlent les marges.
+ *
+ * Références couvertes = celles du Prévisionnel de ce client (remarque
+ * Nicolas, 09/09/2026 : "la mercuriale correspond exactement aux références
+ * qui sont présentes dans les forecasts") — donc TOUTE la mercuriale, pas
+ * seulement ce qui a été facturé récemment. Si le Prévisionnel du client
+ * est vide (pas encore importé), pas de références à vérifier : voir
+ * app/prevision pour l'importer.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { fetchClientRatesOverview } from "@/lib/netsuiteFinancials";
+import { fetchRatesForReferences } from "@/lib/netsuiteFinancials";
+import { listForecasts } from "@/lib/forecastsDb";
 import clientsConfig from "@/lib/clients.json";
 
 export const runtime = "nodejs";
@@ -37,11 +45,14 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const rates = await fetchClientRatesOverview(
+    const forecastRows = await listForecasts(clientKey);
+    const refs = [...new Set(forecastRows.map((r) => r.reference))];
+    const rates = await fetchRatesForReferences(
       cfg.netsuite_parent_id,
+      refs,
       process.env.NETSUITE_COMMISSION_FIELD_ID
     );
-    return NextResponse.json({ rates });
+    return NextResponse.json({ rates, refSource: "prevision" as const });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
