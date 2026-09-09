@@ -13,7 +13,7 @@
  * "Commission à payer - référencement" du rapport PDF généré au même moment.
  */
 import * as XLSX from "xlsx";
-import { suiteql, fetchItemFieldRates } from "./netsuiteFinancials";
+import { suiteql, fetchItemFieldRates, detectMultiClientGaps, type MultiClientGap } from "./netsuiteFinancials";
 import { loadClientConfig, parseMonthLabel } from "./compute";
 
 interface InvoicedLine {
@@ -81,7 +81,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 export async function buildCommissionsXlsx(
   clientKey: string,
   monthLabel: string
-): Promise<{ buffer: Buffer; filename: string; totalCommission: number | null }> {
+): Promise<{ buffer: Buffer; filename: string; totalCommission: number | null; warnings: MultiClientGap[] }> {
   const cfg = loadClientConfig(clientKey);
   const month = parseMonthLabel(monthLabel);
   const lines = await fetchInvoicedLines(cfg.netsuite_parent_id, month.dateFrom, month.dateTo);
@@ -125,7 +125,14 @@ export async function buildCommissionsXlsx(
   // libre (€/carton) — décision Nicolas 08/09/2026 : plus de repli sur
   // l'ancien référentiel Supabase rfa_rates ; cas LID149PP/WDFK02PO (taux
   // différent selon le client) couverts par la table d'exceptions.
-  const nsRates = await fetchItemFieldRates(cfg.netsuite_parent_id, refs, process.env.NETSUITE_COMMISSION_FIELD_ID);
+  // Alerte multi-client (Price Levels) — décision Nicolas (09/09/2026) :
+  // signal réservé à cet Excel interne + à l'encart de l'outil, jamais au
+  // rapport PDF client. Calculée en parallèle du taux, sur les mêmes refs.
+  const [nsRates, warnings] = await Promise.all([
+    fetchItemFieldRates(cfg.netsuite_parent_id, refs, process.env.NETSUITE_COMMISSION_FIELD_ID),
+    detectMultiClientGaps(cfg.netsuite_parent_id, refs),
+  ]);
+  const warningByRef = new Map(warnings.map((w) => [w.ref.trim().toUpperCase(), w]));
 
   interface RfaLine {
     ref: string;
@@ -167,11 +174,21 @@ export async function buildCommissionsXlsx(
   XLSX.utils.book_append_sheet(wb, wsVentes, `Ventes ${monthName} ${month.year}`.slice(0, 31));
 
   // Onglet RFAs avec formules (Commission = colis x taux OU HT x taux ; total = SUM).
-  const header = ["Référence", "Colis facturés", "Montant € HT", "Taux", "Mode", "Commission €"];
+  // Colonne "Alerte" (Price Levels, décision Nicolas 09/09/2026) : référence
+  // vendue aussi à un autre client MBA Green sans ligne d'exception pour
+  // celui-ci — le taux utilisé (champ général NetSuite) est peut-être celui
+  // de l'autre client. Interne uniquement (jamais dans le rapport PDF).
+  const header = ["Référence", "Colis facturés", "Montant € HT", "Taux", "Mode", "Commission €", "Alerte"];
   const aoa: (string | number | null)[][] = [header];
-  rfaLines.forEach((l) => aoa.push([l.ref, l.colis, l.ht, l.rate, l.mode, null]));
+  rfaLines.forEach((l) => {
+    const gap = warningByRef.get(l.ref.trim().toUpperCase());
+    const alerte = gap
+      ? `⚠️ Vendue aussi à ${gap.otherClients.join(", ")} — vérifier le taux / créer une exception`
+      : "";
+    aoa.push([l.ref, l.colis, l.ht, l.rate, l.mode, null, alerte]);
+  });
   aoa.push([]);
-  aoa.push(["Total", null, null, null, null, null]);
+  aoa.push(["Total", null, null, null, null, null, null]);
   const wsRfa = XLSX.utils.aoa_to_sheet(aoa);
   rfaLines.forEach((l, i) => {
     const row = i + 2; // 1-based, après l'en-tête
@@ -181,10 +198,10 @@ export async function buildCommissionsXlsx(
   });
   const totalRow = rfaLines.length + 3;
   wsRfa[`F${totalRow}`] = { t: "n", f: `SUM(F2:F${rfaLines.length + 1})` };
-  wsRfa["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 14 }];
+  wsRfa["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 55 }];
   XLSX.utils.book_append_sheet(wb, wsRfa, "RFAs");
 
   const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
   const filename = `Commissions ${cfg.display_name} ${monthLabel}.xlsx`;
-  return { buffer, filename, totalCommission };
+  return { buffer, filename, totalCommission, warnings };
 }

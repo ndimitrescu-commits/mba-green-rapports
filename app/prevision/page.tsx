@@ -33,7 +33,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
   padding: "6px 8px",
-  border: "1px solid #d6d9ea",
+  border: "1px solid #DAD4C2",
   borderRadius: 6,
   fontSize: 13,
   fontFamily: "inherit",
@@ -43,7 +43,7 @@ const btnPrimary: React.CSSProperties = {
   padding: "8px 16px",
   borderRadius: 8,
   border: "none",
-  background: "#1B1F5E",
+  background: "#1B1B16",
   color: "#fff",
   fontSize: 13,
   cursor: "pointer",
@@ -52,9 +52,9 @@ const btnPrimary: React.CSSProperties = {
 const btnSecondary: React.CSSProperties = {
   padding: "8px 16px",
   borderRadius: 8,
-  border: "1px solid #1B1F5E",
+  border: "1px solid #1F3D2B",
   background: "#fff",
-  color: "#1B1F5E",
+  color: "#1F3D2B",
   fontSize: 13,
   cursor: "pointer",
 };
@@ -236,10 +236,10 @@ export default function PrevisionPage() {
     <div
       style={{
         fontFamily: "Arial, Helvetica, sans-serif",
-        background: "#EEF0FA",
+        background: "#F5F1E8",
         margin: 0,
         padding: 40,
-        color: "#1B1F5E",
+        color: "#1F3D2B",
         minHeight: "100vh",
       }}
     >
@@ -248,18 +248,18 @@ export default function PrevisionPage() {
           maxWidth: 1240,
           margin: "0 auto",
           background: "#fff",
-          borderRadius: 18,
+          borderRadius: 14,
           padding: 40,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          border: "1px solid #DAD4C2",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h1 style={{ fontSize: 28, marginTop: 0 }}>Prévisionnel clients</h1>
-          <a href="/" style={{ color: "#1B1F5E", fontSize: 14 }}>
+          <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: 30, marginTop: 0 }}>Prévisionnel clients</h1>
+          <a href="/" style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B6A5F", textDecoration: "none" }}>
             ← Génération
           </a>
         </div>
-        <p style={{ fontSize: 13, color: "#6b6f8a", marginTop: 0 }}>
+        <p style={{ fontSize: 13, color: "#6B6A5F", marginTop: 0 }}>
           Prévisions mensuelles en <b>cartons</b> — références en ligne, mois en colonne. Une
           cellule s'enregistre quand tu en sors ; <b>vider une cellule supprime la prévision</b>.
           C'est la source utilisée par les rapports.
@@ -320,7 +320,7 @@ export default function PrevisionPage() {
               <button onClick={addMonth} style={btnSecondary}>
                 + Mois
               </button>
-              {loading && <span style={{ fontSize: 13, color: "#6b6f8a" }}>Chargement…</span>}
+              {loading && <span style={{ fontSize: 13, color: "#6B6A5F" }}>Chargement…</span>}
               <span style={{ flex: 1 }} />
               <button
                 onClick={() => void importFromSheets()}
@@ -335,7 +335,7 @@ export default function PrevisionPage() {
             <div style={{ overflowX: "auto" }}>
               <table style={{ borderCollapse: "collapse", fontSize: 13, minWidth: "100%" }}>
                 <thead>
-                  <tr style={{ textAlign: "left", color: "#6b6f8a" }}>
+                  <tr style={{ textAlign: "left", color: "#6B6A5F" }}>
                     <th
                       style={{
                         padding: "6px 8px",
@@ -357,7 +357,7 @@ export default function PrevisionPage() {
                 </thead>
                 <tbody>
                   {refs.map((r) => (
-                    <tr key={r} style={{ borderTop: "1px solid #eef0fa" }}>
+                    <tr key={r} style={{ borderTop: "1px solid #F5F1E8" }}>
                       <td
                         style={{
                           padding: "4px 8px",
@@ -395,8 +395,8 @@ export default function PrevisionPage() {
                       </td>
                     </tr>
                   ))}
-                  <tr style={{ borderTop: "2px solid #eef0fa", background: "#fafbff" }}>
-                    <td style={{ padding: "6px 8px", position: "sticky", left: 0, background: "#fafbff" }}>
+                  <tr style={{ borderTop: "2px solid #F5F1E8", background: "#FBF8F0" }}>
+                    <td style={{ padding: "6px 8px", position: "sticky", left: 0, background: "#FBF8F0" }}>
                       <div style={{ display: "flex", gap: 6 }}>
                         <input
                           value={newRef}
@@ -410,11 +410,11 @@ export default function PrevisionPage() {
                         </button>
                       </div>
                     </td>
-                    <td colSpan={months.length + 1} style={{ padding: "6px 8px", color: "#6b6f8a", fontSize: 12 }}>
+                    <td colSpan={months.length + 1} style={{ padding: "6px 8px", color: "#6B6A5F", fontSize: 12 }}>
                       Ajoute la référence puis saisis ses cartons dans les colonnes.
                     </td>
                   </tr>
-                  <tr style={{ borderTop: "2px solid #d6d9ea", fontWeight: 700 }}>
+                  <tr style={{ borderTop: "2px solid #DAD4C2", fontWeight: 700 }}>
                     <td style={{ padding: "6px 8px", position: "sticky", left: 0, background: "#fff" }}>Total</td>
                     {months.map((m) => (
                       <td key={m} style={{ padding: "6px 6px", textAlign: "center" }}>
@@ -427,7 +427,7 @@ export default function PrevisionPage() {
               </table>
             </div>
             {refs.length === 0 && !loading && (
-              <div style={{ padding: 16, color: "#6b6f8a", fontSize: 13 }}>
+              <div style={{ padding: 16, color: "#6B6A5F", fontSize: 13 }}>
                 Aucune prévision pour ce client — ajoute une référence ou lance l'import Google Sheets.
               </div>
             )}
@@ -463,7 +463,7 @@ function MatrixCell({
           ...inputStyle,
           textAlign: "center",
           padding: "5px 4px",
-          background: dirty ? "#FFF7E0" : value === null ? "#fafbfd" : "#fff",
+          background: dirty ? "#FFF7E0" : value === null ? "#FBF8F0" : "#fff",
         }}
       />
     </td>

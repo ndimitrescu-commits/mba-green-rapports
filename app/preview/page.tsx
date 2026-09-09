@@ -142,24 +142,24 @@ function FieldEditor({
         }}
         style={{
           width: 110, padding: "3px 7px", borderRadius: 7, fontSize: 13,
-          border: changed ? "2px solid #e8804d" : "1px solid #c7cce6",
-          background: changed ? "#fff4ec" : "#fff", color: "#1f2a6b",
+          border: changed ? "2px solid #e8804d" : "1px solid #DAD4C2",
+          background: changed ? "#fff4ec" : "#fff", color: "#1F3D2B",
         }}
       />
     );
   }
   if (typeof value === "string" || typeof value === "boolean") {
-    return <span style={{ fontSize: 13, color: "#6a6f85" }}>{String(value)}</span>;
+    return <span style={{ fontSize: 13, color: "#6B6A5F" }}>{String(value)}</span>;
   }
   if (isSetMarker(value)) {
-    return <span style={{ fontSize: 12, color: "#9aa0ba" }}>{(value as any).__set.length} éléments</span>;
+    return <span style={{ fontSize: 12, color: "#9C9A88" }}>{(value as any).__set.length} éléments</span>;
   }
   if (Array.isArray(value)) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
         {value.map((item, i) => (
-          <details key={i} open={depth < 1} style={{ background: "#f2f4fc", borderRadius: 8, padding: "4px 8px" }}>
-            <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#1f2a6b" }}>
+          <details key={i} open={depth < 1} style={{ background: "#FBF8F0", borderRadius: 8, padding: "4px 8px" }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#1F3D2B" }}>
               {itemTitle(item, i)}
             </summary>
             <div style={{ paddingLeft: 8, paddingTop: 4 }}>
@@ -184,7 +184,7 @@ function FieldEditor({
                   ? { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }
                   : { display: "flex", flexDirection: "column", gap: 3 }}
               >
-                <span style={{ fontSize: 13, color: "#3a4066", fontWeight: leaf ? 400 : 700 }}>{label(k)}</span>
+                <span style={{ fontSize: 13, color: "#3A392E", fontWeight: leaf ? 400 : 700 }}>{label(k)}</span>
                 <FieldEditor value={v} original={original?.[k]} path={[...path, k]} onChange={onChange} depth={depth + 1} />
               </div>
             );
@@ -324,8 +324,8 @@ export default function PreviewPage() {
 
   const modified = ctx && origJson && JSON.stringify(ctx) !== origJson;
   const sel: React.CSSProperties = {
-    padding: "8px 10px", borderRadius: 10, border: "1px solid #c7cce6",
-    fontSize: 14, color: "#1f2a6b", background: "#fff",
+    padding: "8px 10px", borderRadius: 10, border: "1px solid #DAD4C2",
+    fontSize: 14, color: "#1F3D2B", background: "#fff",
   };
   const btn = (bg: string): React.CSSProperties => ({
     padding: "9px 16px", borderRadius: 10, border: "none", cursor: "pointer",
@@ -333,9 +333,9 @@ export default function PreviewPage() {
   });
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#eef0fa", fontFamily: "inherit" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: "#fff", borderBottom: "1px solid #dde1f1", flexWrap: "wrap" }}>
-        <a href="/" style={{ color: "#1f2a6b", fontWeight: 800, fontSize: 17, textDecoration: "none" }}>
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#F5F1E8", fontFamily: "inherit" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: "#fff", borderBottom: "1px solid #E4DFD1", flexWrap: "wrap" }}>
+        <a href="/" style={{ color: "#1F3D2B", fontWeight: 800, fontSize: 17, textDecoration: "none" }}>
           ← Rapport mensuel — aperçu & édition
         </a>
         <select style={sel} value={clientKey} onChange={(e) => setClientKey(e.target.value)}>
@@ -351,7 +351,7 @@ export default function PreviewPage() {
             <option key={y} value={y}>{y}</option>
           ))}
         </select>
-        <button style={btn("#1f2a6b")} onClick={loadData} disabled={loading}>
+        <button style={btn("#1B1B16")} onClick={loadData} disabled={loading}>
           {loading ? "Collecte en cours…" : ctx ? "Recharger les données" : "Charger les données"}
         </button>
         {ctx && (
@@ -364,7 +364,7 @@ export default function PreviewPage() {
                 Réinitialiser les modifications
               </button>
             )}
-            <span style={{ fontSize: 13, color: rendering ? "#b3541e" : "#6a6f85" }}>
+            <span style={{ fontSize: 13, color: rendering ? "#b3541e" : "#6B6A5F" }}>
               {rendering ? "Actualisation de l'aperçu…" : modified ? "Aperçu à jour (valeurs modifiées)" : "Aperçu à jour"}
             </span>
             <div style={{ flex: 1 }} />
@@ -382,7 +382,7 @@ export default function PreviewPage() {
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div style={{ width: 430, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
           {!ctx && !loading && (
-            <div style={{ color: "#6a6f85", fontSize: 14, lineHeight: 1.5 }}>
+            <div style={{ color: "#6B6A5F", fontSize: 14, lineHeight: 1.5 }}>
               Choisis un client et un mois puis « Charger les données ». Toutes les
               statistiques du rapport apparaîtront ici, modifiables ; l'aperçu de
               droite est le PDF réel, régénéré à chaque changement. Les champs
@@ -392,7 +392,7 @@ export default function PreviewPage() {
           {ctx &&
             SECTIONS.filter((s) => ctx[s] !== undefined).map((s) => (
               <details key={s} open={s === "kpi"} style={{ background: "#fff", borderRadius: 12, padding: "8px 12px" }}>
-                <summary style={{ cursor: "pointer", fontWeight: 800, color: "#1f2a6b", fontSize: 15 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 800, color: "#1F3D2B", fontSize: 15 }}>
                   {label(s)}
                 </summary>
                 <div style={{ paddingTop: 8 }}>
@@ -411,10 +411,10 @@ export default function PreviewPage() {
           {pdfData ? (
             <div
               ref={viewerRef}
-              style={{ height: "100%", overflowY: "auto", background: "#e2e6f5", borderRadius: 12, padding: 12 }}
+              style={{ height: "100%", overflowY: "auto", background: "#EFEAD9", borderRadius: 12, padding: 12 }}
             />
           ) : (
-            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa0ba", fontSize: 15, background: "#e9ecfb", borderRadius: 12 }}>
+            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9C9A88", fontSize: 15, background: "#FBF8F0", borderRadius: 12 }}>
               {loading ? "Collecte des données en cours…" : ctx ? "Rendu de l'aperçu…" : "L'aperçu PDF s'affichera ici"}
             </div>
           )}

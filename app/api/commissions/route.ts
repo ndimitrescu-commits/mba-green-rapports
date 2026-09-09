@@ -23,11 +23,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "client et month_label sont requis." }, { status: 400 });
   }
   try {
-    const { buffer, filename } = await buildCommissionsXlsx(client, monthLabel);
+    const { buffer, filename, warnings } = await buildCommissionsXlsx(client, monthLabel);
+    // Alertes multi-client (Price Levels) transmises au navigateur via un
+    // en-tête dédié — évite un second aller-retour pour un simple encart
+    // dans l'outil (décision Nicolas, 09/09/2026 : jamais dans le PDF client).
+    const warningsHeader = Buffer.from(JSON.stringify(warnings), "utf-8").toString("base64");
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+        "X-Commission-Warnings": warningsHeader,
+        "Access-Control-Expose-Headers": "X-Commission-Warnings",
       },
     });
   } catch (e) {

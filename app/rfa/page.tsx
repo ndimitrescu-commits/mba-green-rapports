@@ -30,7 +30,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
   padding: "6px 8px",
-  border: "1px solid #d6d9ea",
+  border: "1px solid #DAD4C2",
   borderRadius: 6,
   fontSize: 13,
   fontFamily: "inherit",
@@ -145,10 +145,10 @@ export default function RfaPage() {
     <div
       style={{
         fontFamily: "Arial, Helvetica, sans-serif",
-        background: "#EEF0FA",
+        background: "#F5F1E8",
         margin: 0,
         padding: 40,
-        color: "#1B1F5E",
+        color: "#1F3D2B",
         minHeight: "100vh",
       }}
     >
@@ -157,18 +157,18 @@ export default function RfaPage() {
           maxWidth: 1080,
           margin: "0 auto",
           background: "#fff",
-          borderRadius: 18,
+          borderRadius: 14,
           padding: 40,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          border: "1px solid #DAD4C2",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h1 style={{ fontSize: 28, marginTop: 0 }}>RFAs — commissions de référencement</h1>
-          <a href="/" style={{ color: "#1B1F5E", fontSize: 14 }}>
+          <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: 30, marginTop: 0 }}>RFAs — commissions de référencement</h1>
+          <a href="/" style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B6A5F", textDecoration: "none" }}>
             ← Génération
           </a>
         </div>
-        <p style={{ fontSize: 13, color: "#6b6f8a", marginTop: 0 }}>
+        <p style={{ fontSize: 13, color: "#6B6A5F", marginTop: 0 }}>
           Taux utilisés par le calcul « Commission à payer - référencement » des rapports
           (base : facturé du mois). <b>€ / colis</b> prime sur <b>% du CA</b> si les deux sont
           renseignés. Les % sont des fractions : 0,1 = 10 %.
@@ -208,7 +208,7 @@ export default function RfaPage() {
                 padding: "10px 22px",
                 borderRadius: 8,
                 border: "none",
-                background: "#1B1F5E",
+                background: "#1B1B16",
                 color: "#fff",
                 fontSize: 14,
                 cursor: "pointer",
@@ -232,16 +232,16 @@ export default function RfaPage() {
                   </option>
                 ))}
               </select>
-              {loading && <span style={{ fontSize: 13, color: "#6b6f8a" }}>Chargement…</span>}
+              {loading && <span style={{ fontSize: 13, color: "#6B6A5F" }}>Chargement…</span>}
               <span style={{ flex: 1 }} />
               <button
                 onClick={addRow}
                 style={{
                   padding: "8px 16px",
                   borderRadius: 8,
-                  border: "1px solid #1B1F5E",
+                  border: "1px solid #1F3D2B",
                   background: "#fff",
-                  color: "#1B1F5E",
+                  color: "#1F3D2B",
                   fontSize: 13,
                   cursor: "pointer",
                 }}
@@ -252,7 +252,7 @@ export default function RfaPage() {
 
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
-                <tr style={{ textAlign: "left", color: "#6b6f8a" }}>
+                <tr style={{ textAlign: "left", color: "#6B6A5F" }}>
                   <th style={{ padding: "6px 8px" }}>Référence</th>
                   <th style={{ padding: "6px 8px", width: 120 }}>Prix centrale €</th>
                   <th style={{ padding: "6px 8px", width: 120 }}>Prix restaurant €</th>
@@ -263,7 +263,7 @@ export default function RfaPage() {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.id ?? `new-${i}`} style={{ borderTop: "1px solid #eef0fa" }}>
+                  <tr key={r.id ?? `new-${i}`} style={{ borderTop: "1px solid #F5F1E8" }}>
                     <td style={{ padding: "4px 8px" }}>
                       <input
                         value={r.reference}
@@ -293,7 +293,7 @@ export default function RfaPage() {
                           padding: "6px 12px",
                           borderRadius: 6,
                           border: "none",
-                          background: r._dirty ? "#1B1F5E" : "#d6d9ea",
+                          background: r._dirty ? "#1F3D2B" : "#DAD4C2",
                           color: "#fff",
                           fontSize: 12,
                           cursor: r._dirty ? "pointer" : "default",
@@ -321,7 +321,7 @@ export default function RfaPage() {
                 ))}
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} style={{ padding: 16, color: "#6b6f8a" }}>
+                    <td colSpan={6} style={{ padding: 16, color: "#6B6A5F" }}>
                       Aucune référence pour ce client — « + Ajouter une référence » pour commencer.
                     </td>
                   </tr>

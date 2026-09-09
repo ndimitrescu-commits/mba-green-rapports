@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import clientsConfig from "@/lib/clients.json";
+import { theme, microLabel, pageShell, headerBar, navLink, navLinkMuted, card, input, buttonPrimary, dot } from "@/lib/theme";
 
 type ClientsConfig = Record<string, { display_name: string }>;
 const CLIENTS = clientsConfig as ClientsConfig;
@@ -21,11 +22,31 @@ const MONTHS = [
   "Décembre",
 ];
 
+interface MultiClientGap {
+  ref: string;
+  otherClients: string[];
+}
+
+function LeafMark() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden>
+      <rect width="26" height="26" rx="6" fill={theme.green} />
+      <path
+        d="M7 18C7 11 11 7 19 7C19 15 15 19 8 19C7.6 19 7.2 18.7 7 18Z"
+        fill="#F5F1E8"
+      />
+      <path d="M8 18L18 8" stroke={theme.green} strokeWidth="1" />
+    </svg>
+  );
+}
+
 export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [withCommissions, setWithCommissions] = useState(true);
   const [adminPassword, setAdminPassword] = useState("");
+  const [lastClientLabel, setLastClientLabel] = useState<string | null>(null);
+  const [gaps, setGaps] = useState<MultiClientGap[] | null>(null);
 
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -34,6 +55,7 @@ export default function HomePage() {
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setGaps(null);
     setSubmitting(true);
 
     const form = e.currentTarget;
@@ -86,6 +108,7 @@ export default function HomePage() {
       if (withCommissions) {
         const clientKey = String(formData.get("client") ?? "");
         const monthLabel = String(formData.get("month_label") ?? "");
+        setLastClientLabel(CLIENTS[clientKey]?.display_name ?? clientKey);
         const resX = await fetch(
           `/api/commissions?client=${encodeURIComponent(clientKey)}&month_label=${encodeURIComponent(monthLabel)}`,
           { headers: { "x-admin-password": adminPassword } }
@@ -98,6 +121,21 @@ export default function HomePage() {
           } catch {}
           setError(msg);
         } else {
+          // Alerte multi-client (Price Levels) transmise via un en-tête dédié
+          // — encart affiché dans l'outil uniquement, jamais dans le PDF/xlsx
+          // client (décision Nicolas, 09/09/2026).
+          try {
+            const raw = resX.headers.get("X-Commission-Warnings");
+            if (raw) {
+              // atob() décode en "binary string" (1 char = 1 octet) : il faut
+              // repasser par un TextDecoder UTF-8 pour les accents (Lüks…).
+              const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+              setGaps(JSON.parse(new TextDecoder("utf-8").decode(bytes)));
+            }
+          } catch {
+            // affichage non-bloquant : une alerte manquée ne doit jamais gêner le téléchargement
+          }
+
           const blobX = await resX.blob();
           let fnX = `Commissions ${monthLabel}.xlsx`;
           const dispoX = resX.headers.get("Content-Disposition");
@@ -123,165 +161,179 @@ export default function HomePage() {
   }
 
   return (
-    <div
-      style={{
-        fontFamily: "Arial, Helvetica, sans-serif",
-        background: "#EEF0FA",
-        margin: 0,
-        padding: 40,
-        color: "#1B1F5E",
-        minHeight: "100vh",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 640,
-          margin: "0 auto",
-          background: "#fff",
-          borderRadius: 18,
-          padding: 40,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h1 style={{ fontSize: 28, marginTop: 0 }}>Rapport mensuel client</h1>
-          <span style={{ display: "flex", gap: 16 }}>
-            <a href="/preview" style={{ color: "#1B1F5E", fontSize: 14, fontWeight: 700 }}>
-              Aperçu &amp; édition →
-            </a>
-            <a href="/prevision" style={{ color: "#1B1F5E", fontSize: 14 }}>
-              Prévisionnel →
-            </a>
-            <a href="/rfa" style={{ color: "#1B1F5E", fontSize: 14 }}>
-              RFAs →
-            </a>
-          </span>
+    <div style={pageShell}>
+      <div style={headerBar}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <LeafMark />
+          <span style={{ fontFamily: theme.fontSerif, fontSize: 20, fontWeight: 600 }}>MBA Green</span>
+          <span style={{ ...microLabel, marginLeft: 4 }}>RAPPORTS</span>
         </div>
+        <nav style={{ display: "flex", gap: 24, alignItems: "center" }}>
+          <a href="/" style={{ ...navLink, fontWeight: 600 }}>Générer</a>
+          <a href="/preview" style={navLinkMuted}>Aperçu &amp; édition</a>
+          <a href="/prevision" style={navLinkMuted}>Prévisionnel</a>
+          <a href="/rfa" style={navLinkMuted}>RFAs</a>
+        </nav>
+      </div>
 
-        {error && (
-          <div
-            style={{
-              background: "#FBE9A5",
-              borderRadius: 8,
-              padding: "12px 16px",
-              marginBottom: 16,
-              fontSize: 14,
-            }}
-          >
-            {error}
-          </div>
-        )}
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "40px 40px 64px" }}>
+        <div style={microLabel}>OUTIL DE GÉNÉRATION</div>
+        <h1 style={{ fontFamily: theme.fontSerif, fontWeight: 500, fontSize: 44, margin: "6px 0 8px" }}>
+          Rapport mensuel client
+        </h1>
+        <p style={{ color: theme.inkMuted, fontSize: 15, margin: "0 0 32px", maxWidth: 560 }}>
+          Interroge NetSuite, Supabase et Google Sheets en direct — prévisions, consommation,
+          stock/transit, financier et logistique GEODIS/GLS récupérés automatiquement.
+        </p>
 
-        <form onSubmit={handleSubmit}>
-          <label style={labelStyle}>Client</label>
-          <select name="client" required style={inputStyle} defaultValue="">
-            <option value="" disabled>
-              Choisir un client
-            </option>
-            {Object.entries(CLIENTS).map(([key, cfg]) => (
-              <option key={key} value={key}>
-                {cfg.display_name}
-              </option>
-            ))}
-          </select>
-
-          <label style={labelStyle}>Mois du rapport</label>
-          <div style={{ display: "flex", gap: 16 }}>
-            <select name="month_name" required style={{ ...inputStyle, flex: 2 }} defaultValue="">
-              <option value="" disabled>
-                Mois
-              </option>
-              {MONTHS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-            <select
-              name="month_year"
-              required
-              style={{ ...inputStyle, flex: 1 }}
-              defaultValue={currentYear}
+        <div style={{ ...card, padding: 32, maxWidth: 640 }}>
+          {error && (
+            <div
+              style={{
+                background: "#FBE3A3",
+                borderRadius: 8,
+                padding: "12px 16px",
+                marginBottom: 20,
+                fontSize: 14,
+                color: "#5A4A12",
+              }}
             >
-              {years.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={hintStyle}>
-            Prévisions, consommation, stock/transit, données financières et logistique GEODIS/GLS (Supabase) sont récupérés automatiquement — plus aucun fichier à importer.
-          </div>
-
-          <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={withCommissions}
-              onChange={(e) => setWithCommissions(e.target.checked)}
-            />
-            Générer aussi le fichier commissions (xlsx)
-          </label>
-          {withCommissions && (
-            <>
-              <input
-                type="password"
-                placeholder="Mot de passe admin (onglets RFAs / Prévisionnel)"
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-                style={inputStyle}
-                required
-              />
-              <div style={hintStyle}>
-                Détail des factures du mois + commissions par référence (taux RFAs) — mêmes
-                chiffres que le rapport, base « facturé uniquement ».
-              </div>
-            </>
+              {error}
+            </div>
           )}
 
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              marginTop: 28,
-              background: "#1B1F5E",
-              color: "#fff",
-              border: "none",
-              padding: "14px 24px",
-              borderRadius: 10,
-              fontSize: 16,
-              fontWeight: 700,
-              cursor: submitting ? "not-allowed" : "pointer",
-              width: "100%",
-              opacity: submitting ? 0.7 : 1,
-            }}
-          >
-            {submitting ? "Génération en cours..." : "Générer le rapport PDF"}
-          </button>
-        </form>
+          <form onSubmit={handleSubmit}>
+            <label style={{ ...microLabel, display: "block", marginBottom: 6 }}>Client (marque)</label>
+            <select name="client" required style={{ ...input, marginBottom: 18 }} defaultValue="">
+              <option value="" disabled>
+                Choisir un client
+              </option>
+              {Object.entries(CLIENTS).map(([key, cfg]) => (
+                <option key={key} value={key}>
+                  {cfg.display_name}
+                </option>
+              ))}
+            </select>
+
+            <label style={{ ...microLabel, display: "block", marginBottom: 6 }}>Mois du rapport</label>
+            <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
+              <select name="month_name" required style={{ ...input, flex: 2 }} defaultValue="">
+                <option value="" disabled>
+                  Mois
+                </option>
+                {MONTHS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <select
+                name="month_year"
+                required
+                style={{ ...input, flex: 1 }}
+                defaultValue={currentYear}
+              >
+                {years.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <label
+              style={{
+                ...microLabel,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+                marginBottom: withCommissions ? 12 : 0,
+                textTransform: "none",
+                letterSpacing: 0,
+                fontFamily: theme.fontSans,
+                fontSize: 14,
+                color: theme.ink,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={withCommissions}
+                onChange={(e) => setWithCommissions(e.target.checked)}
+              />
+              Générer aussi le fichier commissions (xlsx)
+            </label>
+            {withCommissions && (
+              <>
+                <input
+                  type="password"
+                  placeholder="Mot de passe admin (onglets RFAs / Prévisionnel)"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  style={{ ...input, marginBottom: 8 }}
+                  required
+                />
+                <div style={{ fontSize: 12, color: theme.inkMuted, marginBottom: 4 }}>
+                  Détail des factures du mois + commissions par référence (taux RFAs) — mêmes
+                  chiffres que le rapport, base « facturé uniquement ».
+                </div>
+              </>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{ ...buttonPrimary(submitting), marginTop: 24, width: "100%" }}
+            >
+              {submitting ? "Génération en cours…" : "Générer le rapport PDF"}
+            </button>
+          </form>
+        </div>
+
+        {gaps && (
+          <div style={{ ...card, padding: 24, maxWidth: 640, marginTop: 20 }}>
+            {gaps.length === 0 ? (
+              <div style={{ display: "flex", alignItems: "center", fontSize: 14 }}>
+                <span style={dot(theme.good)} />
+                Aucune référence à risque détectée{lastClientLabel ? ` pour ${lastClientLabel}` : ""} ce mois-ci.
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
+                  <span style={dot(theme.bad)} />
+                  {gaps.length} référence{gaps.length > 1 ? "s" : ""} à vérifier
+                  {lastClientLabel ? ` pour ${lastClientLabel}` : ""}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {gaps.map((g) => (
+                    <div
+                      key={g.ref}
+                      style={{
+                        fontSize: 13,
+                        padding: "8px 12px",
+                        background: "#FBF3EC",
+                        border: `1px solid #EBD9C6`,
+                        borderRadius: 8,
+                      }}
+                    >
+                      <span style={{ fontFamily: theme.fontMono, fontWeight: 600 }}>{g.ref}</span>
+                      {" — vendue aussi à "}
+                      {g.otherClients.join(", ")}
+                      {" — pas d'exception dans NetSuite pour ce client sur cette référence."}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 12, color: theme.inkMuted, marginTop: 12 }}>
+                  Le taux utilisé aujourd'hui vient du champ général NetSuite — vérifier qu'il
+                  correspond bien à ce client, ou créer une ligne dans la table d'exceptions
+                  « Commission par client (MBA) ». Détail aussi disponible dans la colonne
+                  « Alerte » de l'onglet RFAs du fichier commissions.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontWeight: 700,
-  margin: "18px 0 6px",
-  fontSize: 14,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: 10,
-  borderRadius: 8,
-  border: "1px solid #ccc",
-  fontSize: 14,
-};
-
-const hintStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: "#555",
-  marginTop: 2,
-};

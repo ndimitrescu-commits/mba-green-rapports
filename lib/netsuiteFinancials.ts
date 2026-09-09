@@ -348,6 +348,88 @@ export async function fetchReferencingCommissionUnified(
 }
 
 /**
+ * Price Levels NetSuite identifiant chaque client MBA Green (voir onglet
+ * Pricing d'un article — vérifié par inspection DOM, 08/09/2026). Pokawa a
+ * 5 zones (un seul client "Pokawa" pour la détection multi-client).
+ * La Kazdalerie n'a pas de Price Level connu : exclue de la détection (pas
+ * de faux négatif silencieux — mieux vaut ne rien signaler que se tromper).
+ */
+const CLIENT_PRICE_LEVELS_BY_PARENT: Record<number, number[]> = {
+  188607: [9, 10, 11, 12, 13], // Pokawa (France/Espagne/Luxembourg/Belgique/Portugal)
+  189320: [16], // Krousty
+  194089: [30], // Black & White Burger
+  189319: [25], // Lüks Kebab
+};
+const PRICE_LEVEL_CLIENT_NAME: Record<number, string> = {
+  9: "Pokawa", 10: "Pokawa", 11: "Pokawa", 12: "Pokawa", 13: "Pokawa",
+  16: "Krousty",
+  25: "Lüks Kebab",
+  30: "Black & White Burger",
+};
+
+export interface MultiClientGap {
+  ref: string;
+  otherClients: string[];
+}
+
+/**
+ * Détecte, parmi les références facturées à un client ce mois-ci, celles qui
+ * sont vendues à un AUTRE client MBA Green (signal : un Price Level d'un
+ * autre client est renseigné sur l'article) et qui ne sont PAS couvertes par
+ * une ligne de la table d'exceptions (customrecordmba_commission_client) pour
+ * CE client — donc à risque d'utiliser le mauvais taux (celui de l'autre
+ * client, via le champ général NetSuite). Décision Nicolas (09/09/2026) :
+ * signal réservé à l'outil (encart interne) — jamais dans le rapport PDF
+ * client, jamais bloquant. Repli silencieux sur [] en cas d'erreur SuiteQL
+ * (vérification annexe, ne doit jamais empêcher la génération du rapport).
+ */
+export async function detectMultiClientGaps(
+  parentId: number,
+  itemCodes: string[]
+): Promise<MultiClientGap[]> {
+  const myLevels = new Set(CLIENT_PRICE_LEVELS_BY_PARENT[Number(parentId)] ?? []);
+  if (myLevels.size === 0 || itemCodes.length === 0) return [];
+  try {
+    const codes = [...new Set(itemCodes.map((c) => String(c).trim().toUpperCase()))];
+    const list = codes.map((c) => `'${c.replace(/'/g, "''")}'`).join(", ");
+    const items = await suiteql<{ id: number; itemid: string }>(
+      `SELECT id, itemid FROM item WHERE itemid IN (${list})`
+    );
+    if (items.length === 0) return [];
+    const idToCode = new Map(items.map((i) => [Number(i.id), i.itemid]));
+    const ids = items.map((i) => Number(i.id));
+    const allLevels = Object.keys(PRICE_LEVEL_CLIENT_NAME).join(",");
+
+    const [priceRows, exceptions] = await Promise.all([
+      suiteql<{ item: number; pricelevel: number }>(
+        `SELECT item, pricelevel FROM pricing WHERE item IN (${ids.join(",")}) AND pricelevel IN (${allLevels})`
+      ),
+      fetchClientExceptionRates(parentId),
+    ]);
+
+    const levelsByItem = new Map<number, Set<number>>();
+    for (const r of priceRows) {
+      const it = Number(r.item);
+      if (!levelsByItem.has(it)) levelsByItem.set(it, new Set());
+      levelsByItem.get(it)!.add(Number(r.pricelevel));
+    }
+
+    const out: MultiClientGap[] = [];
+    for (const [itemId, levels] of levelsByItem) {
+      const otherLevels = [...levels].filter((l) => !myLevels.has(l));
+      if (otherLevels.length === 0) continue; // pas multi-client
+      if (exceptions.has(itemId)) continue; // déjà couvert par une exception
+      const otherClients = [...new Set(otherLevels.map((l) => PRICE_LEVEL_CLIENT_NAME[l]))];
+      out.push({ ref: idToCode.get(itemId) ?? String(itemId), otherClients });
+    }
+    out.sort((a, b) => a.ref.localeCompare(b.ref));
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Taux de commission (€/carton) pour un jeu de références données, pour un
  * client donné (`parentId`) : table d'exceptions par client en priorité
  * (fetchClientExceptionRates), sinon champ NetSuite libre `fieldId` sur la
