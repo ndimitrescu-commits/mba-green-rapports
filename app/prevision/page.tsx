@@ -141,7 +141,10 @@ export default function PrevisionPage() {
     for (const m of months) {
       let s = 0;
       for (const r of refs) s += cells.get(keyOf(r, m)) ?? 0;
-      t.set(m, Math.round(s));
+      // Arrondi au supérieur — on parle en cartons, pas d'intérêt à afficher
+      // des décimales (remarque Nicolas, 09/09/2026 : reflète la vue par
+      // défaut du Google Sheet Prévisionnel).
+      t.set(m, Math.ceil(s));
     }
     return t;
   }, [cells, refs, months]);
@@ -269,7 +272,7 @@ export default function PrevisionPage() {
                           const v = cells.get(keyOf(r, m));
                           return (
                             <td key={`${r}|${m}`} style={{ padding: "6px 6px", textAlign: "center" }}>
-                              {v !== undefined ? v.toLocaleString("fr-FR") : <span style={{ color: "#CFC9B8" }}>—</span>}
+                              {v !== undefined ? Math.ceil(v).toLocaleString("fr-FR") : <span style={{ color: "#CFC9B8" }}>—</span>}
                             </td>
                           );
                         })}
