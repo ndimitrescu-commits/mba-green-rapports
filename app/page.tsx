@@ -27,19 +27,6 @@ interface MultiClientGap {
   otherClients: string[];
 }
 
-function LeafMark() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden>
-      <rect width="26" height="26" rx="6" fill={theme.green} />
-      <path
-        d="M7 18C7 11 11 7 19 7C19 15 15 19 8 19C7.6 19 7.2 18.7 7 18Z"
-        fill="#F5F1E8"
-      />
-      <path d="M8 18L18 8" stroke={theme.green} strokeWidth="1" />
-    </svg>
-  );
-}
-
 export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -164,8 +151,8 @@ export default function HomePage() {
     <div style={pageShell}>
       <div style={headerBar}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <LeafMark />
-          <span style={{ fontFamily: theme.fontSerif, fontSize: 20, fontWeight: 600 }}>MBA Green</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-mba-green.png" alt="MBA Green" style={{ height: 26, width: "auto" }} />
           <span style={{ ...microLabel, marginLeft: 4 }}>RAPPORTS</span>
         </div>
         <nav style={{ display: "flex", gap: 24, alignItems: "center" }}>
