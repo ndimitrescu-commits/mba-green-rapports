@@ -347,6 +347,52 @@ export async function fetchReferencingCommissionUnified(
   return { commission: matched ? Math.round(commission * 100) / 100 : null, missingRate };
 }
 
+export interface ClientRateRow {
+  ref: string;
+  rate: number | null;
+  source: "exception" | "netsuite" | "aucun";
+}
+
+/**
+ * Aperçu lecture-seule des taux réellement appliqués à un client — décision
+ * Nicolas (09/09/2026) : l'onglet /rfa n'édite plus rien (l'ancien
+ * référentiel Supabase rfa_rates n'est lu par aucun calcul depuis le passage
+ * sur NetSuite), il affiche juste ce que le calcul utilise vraiment. Sur les
+ * références facturées à ce client sur les `monthsBack` derniers mois :
+ * taux d'exception (table "Commission par client (MBA)") si présent, sinon
+ * champ général NetSuite sur la fiche article, sinon "aucun".
+ */
+export async function fetchClientRatesOverview(
+  parentId: number,
+  fieldId: string | null | undefined,
+  monthsBack = 12
+): Promise<ClientRateRow[]> {
+  const now = new Date();
+  const dateTo = now.toISOString().slice(0, 10);
+  const from = new Date(now);
+  from.setUTCMonth(from.getUTCMonth() - monthsBack);
+  const dateFrom = from.toISOString().slice(0, 10);
+
+  const [rows, exceptions] = await Promise.all([
+    fetchInvoicedByItem(parentId, dateFrom, dateTo, fieldId ?? null),
+    fetchClientExceptionRates(parentId),
+  ]);
+
+  const out: ClientRateRow[] = rows.map((r) => {
+    const exceptionRate = exceptions.get(Number(r.item_id));
+    if (exceptionRate !== undefined && Number.isFinite(exceptionRate)) {
+      return { ref: r.itemid, rate: exceptionRate, source: "exception" };
+    }
+    const nsRate = r.ns_rate !== null && r.ns_rate !== undefined ? Number(r.ns_rate) : null;
+    if (nsRate !== null && Number.isFinite(nsRate) && nsRate > 0) {
+      return { ref: r.itemid, rate: nsRate, source: "netsuite" };
+    }
+    return { ref: r.itemid, rate: null, source: "aucun" };
+  });
+  out.sort((a, b) => a.ref.localeCompare(b.ref));
+  return out;
+}
+
 /**
  * Price Levels NetSuite identifiant chaque client MBA Green (voir onglet
  * Pricing d'un article — vérifié par inspection DOM, 08/09/2026). Pokawa a
