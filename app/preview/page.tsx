@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import clientsConfig from "@/lib/clients.json";
+import AppHeader from "@/app/components/AppHeader";
 
 /**
  * Rendu du PDF en canvas via pdf.js — indépendant des réglages du navigateur
@@ -334,10 +335,9 @@ export default function PreviewPage() {
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#F5F1E8", fontFamily: "inherit" }}>
+      <AppHeader active="/preview" />
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: "#fff", borderBottom: "1px solid #E4DFD1", flexWrap: "wrap" }}>
-        <a href="/" style={{ color: "#1F3D2B", fontWeight: 800, fontSize: 17, textDecoration: "none" }}>
-          ← Rapport mensuel — aperçu & édition
-        </a>
+        <span style={{ color: "#1F3D2B", fontWeight: 800, fontSize: 17 }}>Aperçu &amp; édition</span>
         <select style={sel} value={clientKey} onChange={(e) => setClientKey(e.target.value)}>
           {Object.entries(CLIENTS).map(([k, v]) => (
             <option key={k} value={k}>{v.display_name}</option>

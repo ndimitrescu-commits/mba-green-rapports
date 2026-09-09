@@ -64,6 +64,46 @@ export async function upsertForecast(row: ForecastDbRow): Promise<ForecastDbRow>
   return data as ForecastDbRow;
 }
 
+export interface ForecastAggregateRow {
+  reference: string;
+  month: string; // "YYYY-MM"
+  quantity_cartons: number;
+  updated_at: string; // la plus récente des lignes agrégées
+}
+
+/**
+ * Vue consolidée "Tous les clients" — somme des cartons prévus par référence
+ * et par mois, tous clients confondus (onglet /prevision, décision Nicolas
+ * 09/09/2026 : c'est la vue par défaut avant de choisir un client précis).
+ * NB : les références sont préfixées/suffixées par enseigne dans le classeur
+ * source (ex. "BAG001B&W" vs "UFC1" Pokawa), donc pas de collision attendue
+ * entre clients sur un même code — une somme directe est donc fiable.
+ */
+export async function listAllForecastsAggregated(): Promise<ForecastAggregateRow[]> {
+  const sb = getServiceSupabase();
+  const { data, error } = await sb
+    .from("forecasts")
+    .select("reference, month, quantity_cartons, updated_at");
+  if (error) throw new Error(`Supabase forecasts (tous clients): ${error.message}`);
+  const map = new Map<string, ForecastAggregateRow>();
+  for (const r of (data ?? []) as { reference: string; month: string; quantity_cartons: number; updated_at: string | null }[]) {
+    const key = `${r.reference}|${r.month}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.quantity_cartons += Number(r.quantity_cartons) || 0;
+      if (r.updated_at && r.updated_at > existing.updated_at) existing.updated_at = r.updated_at;
+    } else {
+      map.set(key, {
+        reference: r.reference,
+        month: r.month,
+        quantity_cartons: Number(r.quantity_cartons) || 0,
+        updated_at: r.updated_at ?? "",
+      });
+    }
+  }
+  return [...map.values()];
+}
+
 export async function deleteForecast(id: string): Promise<void> {
   const sb = getServiceSupabase();
   const { error } = await sb.from("forecasts").delete().eq("id", id);

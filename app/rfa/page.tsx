@@ -10,6 +10,7 @@
  */
 import { useState } from "react";
 import clientsConfig from "@/lib/clients.json";
+import AppHeader from "@/app/components/AppHeader";
 
 type ClientsConfig = Record<string, { display_name: string }>;
 const CLIENTS = clientsConfig as ClientsConfig;
@@ -76,40 +77,23 @@ export default function RfaPage() {
       style={{
         fontFamily: "Arial, Helvetica, sans-serif",
         background: "#F5F1E8",
-        margin: 0,
-        padding: 40,
         color: "#1F3D2B",
         minHeight: "100vh",
       }}
     >
+      <AppHeader active="/rfa" />
+      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "40px 40px 64px" }}>
       <div
         style={{
-          maxWidth: 1080,
-          margin: "0 auto",
           background: "#fff",
           borderRadius: 14,
           padding: 40,
           border: "1px solid #DAD4C2",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: 30, marginTop: 0 }}>
-            RFAs — taux de commission (aperçu)
-          </h1>
-          <a
-            href="/"
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              color: "#6B6A5F",
-              textDecoration: "none",
-            }}
-          >
-            ← Génération
-          </a>
-        </div>
+        <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 500, fontSize: 30, marginTop: 0 }}>
+          RFAs — taux de commission (aperçu)
+        </h1>
         <p style={{ fontSize: 13, color: "#6B6A5F", marginTop: 0, maxWidth: 720 }}>
           Lecture seule — reflète exactement ce qu'utilise le calcul de commission : taux
           d'exception (table « Commission par client (MBA) ») en priorité, sinon champ général
@@ -241,6 +225,7 @@ export default function RfaPage() {
             )}
           </>
         )}
+      </div>
       </div>
     </div>
   );

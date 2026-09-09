@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   deleteForecast,
+  listAllForecastsAggregated,
   listForecasts,
   upsertForecast,
 } from "@/lib/forecastsDb";
@@ -23,8 +24,14 @@ export async function GET(req: NextRequest) {
   const clientKey = req.nextUrl.searchParams.get("client") ?? "";
   if (!clientKey) return NextResponse.json({ error: "client requis." }, { status: 400 });
   try {
+    // "__ALL__" = vue consolidée tous clients (par défaut sur /prevision,
+    // décision Nicolas 09/09/2026) : somme des cartons par référence/mois.
+    if (clientKey === "__ALL__") {
+      const rows = await listAllForecastsAggregated();
+      return NextResponse.json({ rows, aggregated: true });
+    }
     const rows = await listForecasts(clientKey);
-    return NextResponse.json({ rows });
+    return NextResponse.json({ rows, aggregated: false });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }

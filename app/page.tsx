@@ -2,7 +2,8 @@
 
 import { useState, FormEvent } from "react";
 import clientsConfig from "@/lib/clients.json";
-import { theme, microLabel, pageShell, headerBar, navLink, navLinkMuted, card, input, buttonPrimary, dot } from "@/lib/theme";
+import { theme, microLabel, pageShell, card, input, buttonPrimary, dot } from "@/lib/theme";
+import AppHeader from "@/app/components/AppHeader";
 
 type ClientsConfig = Record<string, { display_name: string }>;
 const CLIENTS = clientsConfig as ClientsConfig;
@@ -149,19 +150,7 @@ export default function HomePage() {
 
   return (
     <div style={pageShell}>
-      <div style={headerBar}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-mba-green.png" alt="MBA Green" style={{ height: 26, width: "auto" }} />
-          <span style={{ ...microLabel, marginLeft: 4 }}>RAPPORTS</span>
-        </div>
-        <nav style={{ display: "flex", gap: 24, alignItems: "center" }}>
-          <a href="/" style={{ ...navLink, fontWeight: 600 }}>Générer</a>
-          <a href="/preview" style={navLinkMuted}>Aperçu &amp; édition</a>
-          <a href="/prevision" style={navLinkMuted}>Prévisionnel</a>
-          <a href="/rfa" style={navLinkMuted}>RFAs</a>
-        </nav>
-      </div>
+      <AppHeader active="/" />
 
       <div style={{ maxWidth: 1040, margin: "0 auto", padding: "40px 40px 64px" }}>
         <div style={microLabel}>OUTIL DE GÉNÉRATION</div>
