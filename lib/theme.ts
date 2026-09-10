@@ -1,26 +1,28 @@
 /**
  * lib/theme.ts
  * ============
- * Design system partagé de l'outil MBA Green Rapports — première étape
- * d'homogénéisation avec les autres outils internes (demande de Nicolas,
- * 09/09/2026, sur le modèle visuel de l'outil Demand Planning : fond crème,
- * titres serif, labels petites capitales monospace, boutons noirs pleins).
- * Pas de framework CSS dans ce projet (styles inline React) : ce fichier
- * centralise les tokens + quelques générateurs de style réutilisables plutôt
- * que de les dupliquer dans chaque page.
+ * Design system partagé de l'outil MBA Green Rapports. Palette de base
+ * (fond/bordures/encre/vert/orange) alignée sur GEODIS/GLS/demand-planning
+ * — "palette procurement" (demande Nicolas 10/09/2026 : « revoir le design
+ * de cet outil pour coller à ce qu'on vient de faire »). Pas de framework
+ * CSS dans ce projet (styles inline React) : ce fichier centralise les
+ * tokens + quelques générateurs de style réutilisables plutôt que de les
+ * dupliquer dans chaque page. Les couleurs propres au contenu de chaque page
+ * (badges, mises en avant spécifiques) restent telles quelles — seuls les
+ * tokens de base et le header changent dans cette passe.
  */
 import type { CSSProperties } from "react";
 
 export const theme = {
-  bg: "#F5F1E8",
+  bg: "#FBF9F5",
   card: "#FFFFFF",
-  border: "#DAD4C2",
-  borderStrong: "#1B1B16",
-  ink: "#1B1B16",
-  inkMuted: "#6B6A5F",
-  green: "#1F3D2B",
-  bad: "#C1440E",
-  good: "#2E7D4F",
+  border: "#E7E7E0",
+  borderStrong: "#14140F",
+  ink: "#14140F",
+  inkMuted: "#4B4A3F",
+  green: "#16A34A",
+  bad: "#E8623D",
+  good: "#16A34A",
   fontSerif: "var(--font-serif, Georgia, serif)",
   fontMono: "var(--font-mono, 'IBM Plex Mono', monospace)",
   fontSans: "var(--font-sans, Arial, sans-serif)",
