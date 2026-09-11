@@ -16,14 +16,14 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo+Black&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
         <style>{`
           :root {
-            --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
-            --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
-            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-serif: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-mono: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-sans: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
             --font-logo: 'Archivo Black', sans-serif;
             --mba-bg: #FBF9F5;
             --mba-ink: #14140F;

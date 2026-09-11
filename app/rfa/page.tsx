@@ -81,7 +81,7 @@ export default function RfaPage() {
   return (
     <div
       style={{
-        fontFamily: "Arial, Helvetica, sans-serif",
+        fontFamily: "var(--font-sans)",
         background: "#F5F1E8",
         color: "#1F3D2B",
         minHeight: "100vh",
