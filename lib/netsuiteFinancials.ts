@@ -384,7 +384,7 @@ export async function fetchRatesForReferences(
 
   const [rows, exceptions] = await Promise.all([
     suiteql<{ id: number; itemid: string; rate: number | null }>(
-      `SELECT id${safeFieldId ? `, ${safeFieldId} AS rate` : ""}, itemid FROM item WHERE itemid IN (${list})`
+      `SELECT id${safeFieldId ? `, ${safeFieldId} AS rate` : ""}, itemid FROM item WHERE UPPER(itemid) IN (${list})`
     ),
     fetchClientExceptionRates(parentId),
   ]);
@@ -454,7 +454,7 @@ export async function detectMultiClientGaps(
     const codes = [...new Set(itemCodes.map((c) => String(c).trim().toUpperCase()))];
     const list = codes.map((c) => `'${c.replace(/'/g, "''")}'`).join(", ");
     const items = await suiteql<{ id: number; itemid: string }>(
-      `SELECT id, itemid FROM item WHERE itemid IN (${list})`
+      `SELECT id, itemid FROM item WHERE UPPER(itemid) IN (${list})`
     );
     if (items.length === 0) return [];
     const idToCode = new Map(items.map((i) => [Number(i.id), i.itemid]));
@@ -510,7 +510,7 @@ export async function fetchItemFieldRates(
   const list = itemCodes.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(", ");
   const [rows, exceptions] = await Promise.all([
     suiteql<{ id: number; itemid: string; rate: number | null }>(
-      `SELECT id${safeFieldId ? `, ${safeFieldId} AS rate` : ""}, itemid FROM item WHERE itemid IN (${list})`
+      `SELECT id${safeFieldId ? `, ${safeFieldId} AS rate` : ""}, itemid FROM item WHERE UPPER(itemid) IN (${list})`
     ),
     fetchClientExceptionRates(parentId),
   ]);
