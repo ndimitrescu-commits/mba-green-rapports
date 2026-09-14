@@ -19,29 +19,29 @@ const MENU_GROUPS = [
   {
     label: "Logistique",
     items: [
-      { label: "GEODIS", href: "https://suivi-livraisons-geodis.vercel.app/" },
-      { label: "GLS", href: "https://gls-suivi.vercel.app/" },
+      { label: "GEODIS", href: "https://geodis.intranet.mbagreen.net/" },
+      { label: "GLS", href: "https://gls.intranet.mbagreen.net/" },
     ],
   },
   {
     label: "Approvisionnement",
     items: [
-      { label: "Demand planning", href: "https://mba-green-demand-planning.vercel.app/conso" },
-      { label: "Approvisionnement", href: "https://mba-green-procurement.vercel.app/rfq" },
+      { label: "Demand planning", href: "https://planning.intranet.mbagreen.net/conso" },
+      { label: "RFQ", href: "https://rfq.intranet.mbagreen.net/dashboard" },
     ],
   },
   {
     label: "Commandes",
     items: [
-      { label: "CSV Generator", href: "https://mbagreen-app-production.up.railway.app/login" },
-      { label: "Portail B2B", href: "https://mba-green-portal.vercel.app/" },
+      { label: "CSV Generator", href: "https://po.intranet.mbagreen.net/login" },
+      { label: "Portail B2B", href: "https://portal.intranet.mbagreen.net/" },
     ],
   },
   {
     label: "Autres",
     items: [
-      { label: "Rapports mensuels", href: "https://mba-green-rapports.vercel.app/" },
-      { label: "Datasheet Database", href: "https://mba-green-fiches-produit.vercel.app/repertoire" },
+      { label: "Rapports mensuels", href: "https://rapports.intranet.mbagreen.net/" },
+      { label: "Datasheet Database", href: "https://fiches.intranet.mbagreen.net/repertoire" },
     ],
   },
 ];
