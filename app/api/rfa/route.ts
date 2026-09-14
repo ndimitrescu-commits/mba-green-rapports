@@ -16,9 +16,17 @@
  * seulement ce qui a été facturé récemment. Si le Prévisionnel du client
  * est vide (pas encore importé), pas de références à vérifier : voir
  * app/prevision pour l'importer.
+ *
+ * Complément (décision Nicolas, 14/09/2026, cas BWBxGMK/MMxBWB) : une
+ * référence ponctuelle/limitée (ex. boîte de collab) jamais ajoutée au
+ * Prévisionnel restait invisible ici même si son taux NetSuite était
+ * erroné ou manquant. On fusionne donc les références du Prévisionnel avec
+ * celles facturées au client sur les 12 derniers mois glissants
+ * (fetchRecentlyInvoicedItemCodes) — repli silencieux sur le Prévisionnel
+ * seul si cette requête échoue.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { fetchRatesForReferences } from "@/lib/netsuiteFinancials";
+import { fetchRatesForReferences, fetchRecentlyInvoicedItemCodes } from "@/lib/netsuiteFinancials";
 import { listForecasts } from "@/lib/forecastsDb";
 import clientsConfig from "@/lib/clients.json";
 
@@ -36,14 +44,19 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const forecastRows = await listForecasts(clientKey);
-    const refs = [...new Set(forecastRows.map((r) => r.reference))];
+    const [forecastRows, invoicedCodes] = await Promise.all([
+      listForecasts(clientKey),
+      fetchRecentlyInvoicedItemCodes(cfg.netsuite_parent_id),
+    ]);
+    const refs = [
+      ...new Set([...forecastRows.map((r) => r.reference), ...invoicedCodes]),
+    ];
     const rates = await fetchRatesForReferences(
       cfg.netsuite_parent_id,
       refs,
       process.env.NETSUITE_COMMISSION_FIELD_ID
     );
-    return NextResponse.json({ rates, refSource: "prevision" as const });
+    return NextResponse.json({ rates, refSource: "prevision+facture_recente" as const });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }

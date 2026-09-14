@@ -409,6 +409,44 @@ export async function fetchRatesForReferences(
 }
 
 /**
+ * Références facturées à un client sur les `monthsBack` derniers mois
+ * glissants (par défaut 12) — décision Nicolas (14/09/2026, cas
+ * BWBxGMK/MMxBWB) : l'onglet /rfa ne listait que les références du
+ * Prévisionnel, ce qui rendait invisibles les références ponctuelles ou
+ * limitées (ex. boîtes de collab) jamais ajoutées au Prévisionnel, même
+ * quand elles ont un taux erroné ou manquant dans NetSuite. Complète la
+ * mercuriale du Prévisionnel dans app/api/rfa/route.ts. Repli silencieux
+ * sur [] en cas d'erreur (annexe au Prévisionnel, ne doit jamais empêcher
+ * l'affichage de la page).
+ */
+export async function fetchRecentlyInvoicedItemCodes(
+  parentId: number,
+  monthsBack = 12
+): Promise<string[]> {
+  try {
+    const since = new Date();
+    since.setUTCMonth(since.getUTCMonth() - monthsBack);
+    const dateFrom = since.toISOString().slice(0, 10);
+    const rows = await suiteql<{ itemid: string }>(
+      `SELECT DISTINCT i.itemid AS itemid
+       FROM transaction so
+       JOIN transactionline til ON til.createdfrom = so.id
+       JOIN transaction inv ON inv.id = til.transaction
+       JOIN item i ON i.id = til.item
+       WHERE so.type = 'SalesOrd'
+         AND inv.type = 'CustInvc'
+         AND til.mainline = 'F' AND til.taxline = 'F'
+         AND til.itemtype = 'InvtPart'
+         AND inv.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+         AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})`
+    );
+    return rows.map((r) => String(r.itemid));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Price Levels NetSuite identifiant chaque client MBA Green (voir onglet
  * Pricing d'un article — vérifié par inspection DOM, 08/09/2026). Pokawa a
  * 5 zones (un seul client "Pokawa" pour la détection multi-client).

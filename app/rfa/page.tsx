@@ -9,8 +9,11 @@
  * calcul utilise vraiment, référence par référence.
  *
  * Références couvertes = la mercuriale du client (déduite du Prévisionnel,
- * remarque Nicolas 09/09/2026), pas seulement le facturé récent — pour
- * repérer les trous même sur des références pas encore commandées.
+ * remarque Nicolas 09/09/2026) FUSIONNÉE avec les références facturées sur
+ * les 12 derniers mois glissants (décision Nicolas 14/09/2026, cas
+ * BWBxGMK/MMxBWB) — pour repérer les trous même sur des références pas
+ * encore commandées, sans qu'une référence ponctuelle absente du
+ * Prévisionnel reste invisible.
  */
 import { useCallback, useEffect, useState } from "react";
 import clientsConfig from "@/lib/clients.json";
@@ -104,7 +107,7 @@ export default function RfaPage() {
           Lecture seule — reflète exactement ce qu'utilise le calcul de commission : taux
           d'exception (table « Commission par client (MBA) ») en priorité, sinon champ général
           NetSuite sur la fiche article. Sur l&apos;ensemble de la mercuriale de ce client (les
-          références de son Prévisionnel), pas seulement le facturé récent. Un taux à 0 € est
+          références de son Prévisionnel et de son facturé des 12 derniers mois). Un taux à 0 € est
           affiché comme tel — seul un champ vraiment vide compte comme « aucun taux ». Pour
           modifier un taux, passe par NetSuite (voir le tutoriel de l&apos;équipe).
         </p>
@@ -137,8 +140,9 @@ export default function RfaPage() {
 
             {!loading && rows.length === 0 && (
               <div style={{ fontSize: 14, color: "#6B6A5F" }}>
-                Aucune référence dans le Prévisionnel de ce client — importe-le d&apos;abord depuis
-                l&apos;onglet Prévisionnel pour voir sa mercuriale ici.
+                Aucune référence trouvée pour ce client, ni dans le Prévisionnel ni dans le
+                facturé récent — importe le Prévisionnel depuis l&apos;onglet dédié si ce n&apos;est
+                pas déjà fait.
               </div>
             )}
 
