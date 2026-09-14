@@ -126,6 +126,8 @@ function makeCtx(clientKey: "KROUSTY" | "BLACK_WHITE"): ReportContext {
     },
     financials: {
       ca_total: kr ? 84841.44 : 115099.1,
+      reglements_total: kr ? 84841.44 : 115099.1,
+      non_product_adjustments: 0,
       reglement_livraison: null,
       reglement_commande: null,
       reglement_30_classique: kr ? 20841.44 : 30099.1,

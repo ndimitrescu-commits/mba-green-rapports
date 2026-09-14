@@ -100,7 +100,7 @@ const ctx: ReportContext = {
     },
   },
   financials: {
-    ca_total: 224315.17, reglement_livraison: null, reglement_commande: null,
+    ca_total: 224315.17, reglements_total: 224315.17, non_product_adjustments: 0, reglement_livraison: null, reglement_commande: null,
     reglement_30_classique: 12867.92, reglement_escompte_2: 41993.52,
     reglement_30_sepa: 163369.55, reglement_45_sepa: 6084.18,
     commissions: 60512.13, commissions_pkg: 0, nombre_commande: 528,

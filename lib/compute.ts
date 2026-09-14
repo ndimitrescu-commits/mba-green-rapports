@@ -135,7 +135,7 @@ async function safe<T>(label: string, p: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-const EMPTY_FINANCIALS = { caHtTotal: null, salesOrderCount: null, caHtByLabel: {} };
+const EMPTY_FINANCIALS = { caHtTotal: null, salesOrderCount: null, caHtByLabel: {}, reglementsTotal: null, nonProductAdjustments: null };
 
 /**
  * Prévisions du client. Pour une enseigne sans onglet Prévisionnel dédié
@@ -538,6 +538,8 @@ export async function buildReportContext(
     },
     financials: {
       ca_total: dget<number | null>(fin, "Chiffre d'Affaires H.T.", null),
+      reglements_total: finData.reglementsTotal,
+      non_product_adjustments: finData.nonProductAdjustments,
       reglement_livraison: dget(fin, "Règlement à la livraison", null),
       reglement_commande: dget(fin, "Règlement à la commande", null),
       reglement_30_classique: dget(fin, "Règlement net 30 jours (classique)", null),
@@ -693,6 +695,8 @@ export async function buildReportContextWithLogistics(
     },
     financials: {
       ca_total: dget(fin, "Chiffre d'Affaires H.T.", null),
+      reglements_total: finData.reglementsTotal,
+      non_product_adjustments: finData.nonProductAdjustments,
       // Clés alignées sur TERM_LABELS (lib/netsuiteFinancials.ts) — mêmes
       // libellés que dans buildReportContext() plus haut. Les anciennes clés
       // "Règlements/..." ne matchaient jamais caHtByLabel → cartes p.11 à "-".

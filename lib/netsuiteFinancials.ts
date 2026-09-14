@@ -22,10 +22,32 @@
 import crypto from "crypto";
 
 export interface NetsuiteFinancials {
+  /** CA "commercial" — lignes produits (InvtPart) facturées rattachées aux
+   * Sales Orders du mois, même base que le xlsx Commissions/onglet Ventes
+   * (décision Nicolas, 14/09/2026 : cas Black & White où le CA du PDF —
+   * alors en base facture, remise d'escompte incluse — ne se réconciliait
+   * pas avec le total de l'onglet Ventes du xlsx, en base commande, lignes
+   * produits uniquement). Sert de KPI de vente, comparé au Prévisionnel. */
   caHtTotal: number | null;
   salesOrderCount: number | null;
-  /** CA HT ventilé par libellé (clés attendues par compute.ts). */
+  /** CA HT ventilé par condition de règlement (clés attendues par
+   * compute.ts) — base facture (mois de facturation), TOUTES les lignes
+   * (produits + remises/escompte) : le montant réellement réglé/encaissé
+   * par condition. Volontairement sur une base différente de caHtTotal
+   * depuis le 14/09/2026 (voir reglementsTotal). */
   caHtByLabel: Record<string, number>;
+  /** Somme de caHtByLabel — le vrai "Total des règlements", INDÉPENDANT de
+   * caHtTotal depuis le 14/09/2026 : on ne gonfle plus ce total pour qu'il
+   * colle artificiellement au CA commercial (l'égalité des deux jusque-là
+   * était une coïncidence de construction, pas une contrainte comptable —
+   * un escompte de règlement anticipé est un coût réel, pas une raison
+   * d'afficher un montant réglé supérieur à ce qui est vraiment prélevé). */
+  reglementsTotal: number | null;
+  /** Lignes non-produit (remises/escompte, etc.) déjà incluses dans
+   * reglementsTotal, sur la même base facture — pour affichage informatif
+   * uniquement ("dont remises...", décision Nicolas 14/09/2026), jamais
+   * pour recalculer un total. Négatif pour une remise. */
+  nonProductAdjustments: number | null;
 }
 
 /** Mapping term NetSuite -> libellé du rapport (validé sur Février/Juillet 2026). */
@@ -169,7 +191,7 @@ export async function fetchFinancials(
   dateTo: string
 ): Promise<NetsuiteFinancials> {
   const toExcl = nextDay(dateTo);
-  const [byTerm, soCount] = await Promise.all([
+  const [byTerm, soCount, productCa, nonProductRows] = await Promise.all([
     suiteql<{ terms: number | null; termname: string | null; total_ht: number }>(
       `SELECT t.terms AS terms, tm.name AS termname,
               SUM(CASE WHEN tl.taxline = 'F' AND tl.mainline = 'F' THEN -tl.foreignamount ELSE 0 END) AS total_ht
@@ -199,23 +221,58 @@ export async function fetchFinancials(
          AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
          AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})`
     ),
+    // CA "commercial" (décision Nicolas, 14/09/2026) — même filtre/périmètre
+    // que fetchInvoicedLines (lib/commissionsXlsx.ts, onglet Ventes du xlsx
+    // Commissions) : lignes produits (InvtPart) rattachées aux Sales Orders
+    // du mois, peu importe le mois de la facture, hors remises/escompte.
+    suiteql<{ total_ht: number | null }>(
+      `SELECT SUM(CASE WHEN til.mainline = 'F' AND til.taxline = 'F' THEN -til.foreignamount ELSE 0 END) AS total_ht
+       FROM transaction so
+       JOIN transactionline til ON til.createdfrom = so.id
+       JOIN transaction inv ON inv.id = til.transaction
+       WHERE so.type = 'SalesOrd'
+         AND inv.type = 'CustInvc'
+         AND til.mainline = 'F' AND til.taxline = 'F'
+         AND til.itemtype = 'InvtPart'
+         AND so.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+         AND so.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+         AND so.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})`
+    ),
+    // Lignes non-produit sur les factures du mois (remises/escompte, etc.)
+    // — affichage informatif "dont remises..." sous Total des règlements
+    // (décision Nicolas 14/09/2026, cas escompte 2% Black & White Août).
+    suiteql<{ total_ht: number | null }>(
+      `SELECT SUM(CASE WHEN tl.taxline = 'F' AND tl.mainline = 'F' THEN -tl.foreignamount ELSE 0 END) AS total_ht
+       FROM transaction t
+       JOIN transactionline tl ON tl.transaction = t.id
+       WHERE t.type = 'CustInvc'
+         AND t.trandate >= TO_DATE('${dateFrom}','YYYY-MM-DD')
+         AND t.trandate < TO_DATE('${toExcl}','YYYY-MM-DD')
+         AND t.entity IN (SELECT id FROM customer WHERE parent = ${Number(parentId)})
+         AND (tl.itemtype <> 'InvtPart' OR tl.itemtype IS NULL)`
+    ),
   ]);
 
   const caHtByLabel: Record<string, number> = {};
-  let total = 0;
+  let settlements = 0;
   for (const row of byTerm) {
     const ht = Math.round(Number(row.total_ht) * 100) / 100;
-    total += ht;
+    settlements += ht;
     const label =
       (row.terms !== null && TERM_LABELS[Number(row.terms)]) ||
       `Règlement ${row.termname ?? "inconnu"}`;
     caHtByLabel[label] = Math.round(((caHtByLabel[label] ?? 0) + ht) * 100) / 100;
   }
 
+  const roundOrNull = (v: number | null | undefined): number | null =>
+    v !== null && v !== undefined && Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 100 : null;
+
   return {
-    caHtTotal: byTerm.length > 0 ? Math.round(total * 100) / 100 : null,
+    caHtTotal: roundOrNull(productCa[0]?.total_ht),
     salesOrderCount: soCount.length > 0 ? Number(soCount[0].nb) : null,
     caHtByLabel,
+    reglementsTotal: byTerm.length > 0 ? Math.round(settlements * 100) / 100 : null,
+    nonProductAdjustments: roundOrNull(nonProductRows[0]?.total_ht),
   };
 }
 

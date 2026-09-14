@@ -1183,11 +1183,20 @@ function pageFinancesCompact(c: Ctx, num: number) {
   txt(c, "Données Financières", 80, 95, { size: 58, font: c.f.xbold });
   rrect(c, 47, 282, 1824, 843, 35, c.p.panel);
   const fin = c.r.financials;
-  // Total des règlements = CA HT total, par définition (la ventilation par
-  // condition de règlement somme au CA — validé par les devs sur Février
-  // 2026). L'ancienne somme n'additionnait que les 6 conditions mappées :
-  // toute condition NetSuite non mappée (cas Krousty) faisait manquer
-  // l'essentiel du total (9 641 € affichés pour 88 077 € de CA).
+  // Total des règlements = somme de TOUTES les conditions de règlement
+  // (fin.reglements_total, lib/netsuiteFinancials.ts:fetchFinancials),
+  // INDÉPENDANT de fin.ca_total depuis le 14/09/2026 (décision Nicolas,
+  // cas Black & White) : le CA est désormais sur la base commande / lignes
+  // produits uniquement (même base que le xlsx Commissions), tandis que le
+  // total des règlements reste le montant réellement réglé/encaissé sur la
+  // base facture, remises/escompte incluses — les deux ne s'égalent plus
+  // par construction, et c'est voulu (un escompte de règlement anticipé est
+  // un coût réel, pas une raison de gonfler le total réglé).
+  // Repli sur la somme des 6 conditions mappées si reglements_total est
+  // absent (ex. anciennes données en cache), puis sur ca_total en dernier
+  // recours — l'ancienne somme mappée seule sous-comptait (cas Krousty :
+  // 9 641 € affichés pour 88 077 € de CA) car elle ignorait toute condition
+  // NetSuite non mappée dans TERM_LABELS.
   const regl = [
     fin.reglement_livraison,
     fin.reglement_commande,
@@ -1199,9 +1208,16 @@ function pageFinancesCompact(c: Ctx, num: number) {
     .map(asNum)
     .filter((v): v is number => v !== null);
   const sommeMappee = regl.length > 0 ? Math.round(regl.reduce((s, v) => s + v, 0) * 100) / 100 : null;
-  const totalReglements = asNum(fin.ca_total) ?? sommeMappee;
+  const totalReglements = asNum(fin.reglements_total) ?? sommeMappee ?? asNum(fin.ca_total);
+  const nonProductAdj = asNum(fin.non_product_adjustments);
+  // N'afficher "dont remises..." que si le montant est significatif (évite
+  // un "dont remises : 0,00 € HT" pour les clients sans escompte/remise).
+  const reglementsSubtitle =
+    nonProductAdj !== null && Math.abs(nonProductAdj) >= 0.01
+      ? `dont remises/ajust. : ${eur(nonProductAdj)}`
+      : null;
 
-  const cards: { x: number; y: number; icon: string; title: string; value: string }[] = [
+  const cards: { x: number; y: number; icon: string; title: string; value: string; subtitle?: string | null }[] = [
     { x: 709, y: 325, icon: "ca", title: "Chiffre d'affaires", value: eur(asNum(fin.ca_total)) },
     {
       x: 434,
@@ -1216,6 +1232,7 @@ function pageFinancesCompact(c: Ctx, num: number) {
       icon: "receipt2",
       title: "Total des règlements",
       value: eur(totalReglements),
+      subtitle: reglementsSubtitle,
     },
   ];
   for (const cd of cards) {
@@ -1241,6 +1258,9 @@ function pageFinancesCompact(c: Ctx, num: number) {
       ty += 34;
     }
     txt(c, cd.value, cd.x + 44, Math.max(ty + 12, cd.y + 210), { size: 34 });
+    if (cd.subtitle) {
+      txt(c, cd.subtitle, cd.x + 44, cd.y + 262, { size: 18, maxW: cw - 88 });
+    }
   }
   footerLogosC(c, 985, true);
 }

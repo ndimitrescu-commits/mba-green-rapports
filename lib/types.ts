@@ -232,6 +232,13 @@ export interface ReportContext {
   };
   financials: {
     ca_total: number | null | undefined;
+    /** Total des règlements (somme de TOUTES les conditions, décision
+     * Nicolas 14/09/2026) — indépendant de ca_total, voir
+     * NetsuiteFinancials.reglementsTotal dans lib/netsuiteFinancials.ts. */
+    reglements_total: number | null | undefined;
+    /** Lignes non-produit (remises/escompte) déjà incluses dans
+     * reglements_total — affichage informatif uniquement. */
+    non_product_adjustments: number | null | undefined;
     reglement_livraison: unknown;
     reglement_commande: unknown;
     reglement_30_classique: unknown;
