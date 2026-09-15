@@ -21,6 +21,7 @@ const MENU_GROUPS = [
     items: [
       { label: "GEODIS", href: "https://geodis.intranet.mbagreen.net/" },
       { label: "GLS", href: "https://gls.intranet.mbagreen.net/" },
+      { label: "Inbound Shipments", href: "https://shipments.intranet.mbagreen.net/" },
     ],
   },
   {
