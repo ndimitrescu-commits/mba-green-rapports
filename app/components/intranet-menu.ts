@@ -19,6 +19,12 @@ export interface IntranetMenuGroup {
 
 export const OVERVIEW_HREF = "https://intranet.mbagreen.net/";
 
+// Onglet principal "SAV" (lien direct, comme "Vue d'ensemble") — demande
+// Nicolas 23/09/2026 : à placer entre "Commandes" et "Autres", pas dans un
+// sous-menu. Page servie par le dashboard (mba-green-dashboard, /sav).
+export const SAV_HREF = "https://intranet.mbagreen.net/sav";
+export const SAV_AFTER_GROUP = "Commandes";
+
 export const MENU_GROUPS: IntranetMenuGroup[] = [
   {
     label: "Logistique",

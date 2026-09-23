@@ -11,10 +11,11 @@
  * Pas de Tailwind dans ce projet : styles inline React, pas de classes.
  * "Autres" est actif ici puisque Rapports mensuels en fait partie.
  */
+import { Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { NavDropdown } from "./NavDropdown";
-import { MENU_GROUPS } from "./intranet-menu";
+import { MENU_GROUPS, SAV_AFTER_GROUP, SAV_HREF } from "./intranet-menu";
 
 
 const NAV_ITEMS: { href: string; label: string }[] = [
@@ -95,7 +96,25 @@ export default function AppHeader({ active }: { active: string }) {
               Vue d&apos;ensemble
             </a>
             {MENU_GROUPS.map((group) => (
-              <NavDropdown key={group.label} label={group.label} items={group.items} active={group.label === "Autres"} />
+              <Fragment key={group.label}>
+                <NavDropdown label={group.label} items={group.items} active={group.label === "Autres"} />
+                {group.label === SAV_AFTER_GROUP && (
+                  <a
+                    href={SAV_HREF}
+                    style={{
+                      borderRadius: 9999,
+                      padding: "8px 14px",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      fontFamily: "var(--font-sans)",
+                      color: "rgba(255,255,255,0.85)",
+                      textDecoration: "none",
+                    }}
+                  >
+                    SAV
+                  </a>
+                )}
+              </Fragment>
             ))}
           </nav>
         </div>
