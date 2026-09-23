@@ -14,38 +14,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { NavDropdown } from "./NavDropdown";
+import { MENU_GROUPS } from "./intranet-menu";
 
-const MENU_GROUPS = [
-  {
-    label: "Logistique",
-    items: [
-      { label: "GEODIS", href: "https://geodis.intranet.mbagreen.net/" },
-      { label: "GLS", href: "https://gls.intranet.mbagreen.net/" },
-      { label: "Inbound Shipments", href: "https://shipments.intranet.mbagreen.net/" },
-    ],
-  },
-  {
-    label: "Approvisionnement",
-    items: [
-      { label: "Demand planning", href: "https://planning.intranet.mbagreen.net/conso" },
-      { label: "RFQ", href: "https://rfq.intranet.mbagreen.net/dashboard" },
-    ],
-  },
-  {
-    label: "Commandes",
-    items: [
-      { label: "CSV Generator", href: "https://po.intranet.mbagreen.net/login" },
-      { label: "Portail B2B", href: "https://portal.intranet.mbagreen.net/" },
-    ],
-  },
-  {
-    label: "Autres",
-    items: [
-      { label: "Rapports mensuels", href: "https://rapports.intranet.mbagreen.net/" },
-      { label: "Datasheet Database", href: "https://fiches.intranet.mbagreen.net/repertoire" },
-    ],
-  },
-];
 
 const NAV_ITEMS: { href: string; label: string }[] = [
   { href: "/", label: "Générer" },
